@@ -1,0 +1,299 @@
+//! What the renderer draws, extracted from a simulation state.
+//!
+//! Render space is micrometres, centred on the cell, z up (sim units are
+//! 8 nm subunits, 125 per um).
+
+use crate::cellgen::UNITS_PER_UM;
+use crate::sim::Sim;
+use bytemuck::{Pod, Zeroable};
+use glam::{DVec3, Vec3};
+
+/// One capsule: a run of `stride` subunits of one microtubule.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable, Default)]
+pub struct Segment {
+    pub a: [f32; 3],
+    /// Distance from the plus end along the filament, um.
+    pub tip_dist: f32,
+    pub b: [f32; 3],
+    /// Distance from the minus end along the filament, um.
+    pub minus_dist: f32,
+    /// Per-filament random hash.
+    pub hash: u32,
+    /// Bit flags, see `FLAG_*`.
+    pub flags: u32,
+    /// Age of this part of the filament, in steps.
+    pub age: f32,
+    /// Local stress alignment (cos^2), or -1 if unmeasured.
+    pub stress: f32,
+}
+
+pub const FLAG_GROWING: u32 = 1;
+pub const FLAG_SHRINKING: u32 = 2;
+pub const FLAG_CORTICAL: u32 = 4;
+pub const FLAG_TREADMILL: u32 = 8;
+pub const FLAG_BUNDLED: u32 = 16;
+pub const FLAG_PLUS_END: u32 = 32;
+/// A stress-field glyph, not a microtubule.
+pub const FLAG_GLYPH: u32 = 64;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable, Default)]
+pub struct MeshVertex {
+    pub pos: [f32; 3],
+    /// Signed outline curvature at this point (1/um), for colouring.
+    pub kappa: f32,
+    pub normal: [f32; 3],
+    /// 1 on the anticlinal wall, 0 on the periclinal faces.
+    pub wall: f32,
+    /// Stress field direction (unit, in the membrane plane) and magnitude.
+    pub stress: [f32; 4],
+}
+
+/// The static part: the membrane.
+#[derive(Clone, Debug, Default)]
+pub struct MembraneGeometry {
+    /// Stress-field glyphs: short sticks along the principal stress axis on
+    /// the cell surface, as long as the local anisotropy.
+    pub glyphs: Vec<Segment>,
+    pub vertices: Vec<MeshVertex>,
+    pub indices: Vec<u32>,
+    pub bounds_min: Vec3,
+    pub bounds_max: Vec3,
+}
+
+/// Simulation state statistics shown alongside the render.
+#[derive(Clone, Debug, Default)]
+pub struct SceneStats {
+    pub step: i64,
+    pub microtubules: usize,
+    pub subunits: usize,
+    pub growing: usize,
+    pub shrinking: usize,
+    pub mean_length_um: f64,
+    pub cortical_fraction: f64,
+    /// Nematic order parameter of the cortical array in the xy plane.
+    pub order_xy: f64,
+    /// Mean cos^2 between cortical subunits and the local stress axis
+    /// (0.5 = random in the plane), or -1 without a stress field.
+    pub stress_alignment: f64,
+    pub seconds_per_step: f64,
+}
+
+/// The dynamic part: microtubules as capsules.
+#[derive(Clone, Debug, Default)]
+pub struct Snapshot {
+    pub segments: Vec<Segment>,
+    pub stats: SceneStats,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Frame {
+    pub center: DVec3,
+}
+
+impl Frame {
+    pub fn from_sim(sim: &Sim) -> Self {
+        let (lo, hi) = sim.membrane.bounds;
+        Frame {
+            center: (lo + hi) * 0.5,
+        }
+    }
+
+    #[inline]
+    pub fn to_render(&self, p: DVec3) -> Vec3 {
+        ((p - self.center) / UNITS_PER_UM).as_vec3()
+    }
+}
+
+fn hash32(mut x: u32) -> u32 {
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7feb_352d);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846c_a68b);
+    x ^ (x >> 16)
+}
+
+pub fn membrane_geometry(sim: &Sim, frame: &Frame) -> MembraneGeometry {
+    let mut g = MembraneGeometry::default();
+    let mut lo = Vec3::splat(f32::INFINITY);
+    let mut hi = Vec3::splat(f32::NEG_INFINITY);
+    for surf in &sim.membrane.surfaces {
+        let base = g.vertices.len() as u32;
+        let kappa = surf.mesh.point_scalars.get("kappa");
+        let wall = surf.mesh.point_scalars.get("anticlinal");
+        let field = surf.mesh.point_vectors.get("strain_0");
+        for (k, &vid) in surf.vertices.iter().enumerate() {
+            let v = &sim.membrane.verts[vid as usize];
+            let p = frame.to_render(v.pos);
+            lo = lo.min(p);
+            hi = hi.max(p);
+            g.vertices.push(MeshVertex {
+                pos: p.to_array(),
+                kappa: kappa.map(|x| x[k] as f32).unwrap_or(0.0),
+                normal: v.normal.as_vec3().to_array(),
+                wall: wall.map(|x| x[k] as f32).unwrap_or(0.0),
+                stress: field
+                    .map(|f| {
+                        let n = v.normal;
+                        let t = f[k] - f[k].dot(n) * n;
+                        let m = t.length();
+                        let d = if m > 0.0 { t / m } else { t };
+                        [d.x as f32, d.y as f32, d.z as f32, m as f32]
+                    })
+                    .unwrap_or([0.0; 4]),
+            });
+        }
+        for t in &surf.mesh.triangles {
+            g.indices.extend(t.iter().map(|&i| base + i));
+        }
+    }
+    g.bounds_min = lo;
+    g.bounds_max = hi;
+    g.glyphs = stress_glyphs(&g.vertices, 1.6);
+    g
+}
+
+/// One glyph per `spacing` um cell of surface where the field is non-zero.
+fn stress_glyphs(verts: &[MeshVertex], spacing: f32) -> Vec<Segment> {
+    let mut taken = rustc_hash::FxHashSet::default();
+    let mut out = Vec::new();
+    for v in verts {
+        let a = v.stress[3].min(1.0);
+        // Outer periclinal face only: the face a microscope looks at.
+        if a < 0.05 || v.normal[2] < 0.85 {
+            continue;
+        }
+        let p = Vec3::from(v.pos);
+        let cell = (p / spacing).floor().as_ivec3();
+        if !taken.insert(cell) {
+            continue;
+        }
+        let n = Vec3::from(v.normal);
+        let d = Vec3::new(v.stress[0], v.stress[1], v.stress[2]);
+        let c = p + n * 0.1;
+        let half = d * 0.42 * spacing * a;
+        out.push(Segment {
+            a: (c - half).to_array(),
+            tip_dist: 10.0,
+            b: (c + half).to_array(),
+            minus_dist: 10.0,
+            hash: 0,
+            flags: FLAG_GLYPH,
+            age: 0.0,
+            stress: a,
+        });
+    }
+    out
+}
+
+/// Half-width, in subunits, of the moving average applied to drawn paths.
+pub const SMOOTH: usize = 4;
+
+/// Capsules for every microtubule, one per `stride` subunits.
+pub fn snapshot(sim: &Sim, frame: &Frame, stride: usize) -> Snapshot {
+    let stride = stride.max(1);
+    let um = 1.0 / UNITS_PER_UM as f32;
+    let mut segs = Vec::with_capacity(sim.n_elements() / stride + sim.mts.len());
+    let mut stats = SceneStats {
+        step: sim.time,
+        microtubules: sim.mts.len(),
+        subunits: sim.n_elements(),
+        ..Default::default()
+    };
+    let (mut q11, mut q12, mut qn) = (0.0f64, 0.0f64, 0.0f64);
+    let mut cortical = 0usize;
+    let (mut sa, mut sn) = (0.0f64, 0usize);
+    let now = sim.time as f32;
+    for (id, mt) in &sim.mts {
+        let n = mt.body.len();
+        if mt.gr_st_plus == 1 {
+            stats.growing += 1;
+        } else if mt.gr_st_plus == -1 {
+            stats.shrinking += 1;
+        }
+        let mut base_flags = 0;
+        if mt.gr_st_plus == 1 {
+            base_flags |= FLAG_GROWING;
+        }
+        if mt.gr_st_plus == -1 {
+            base_flags |= FLAG_SHRINKING;
+        }
+        if mt.gr_st_moins == -1 {
+            base_flags |= FLAG_TREADMILL;
+        }
+        let hash = hash32(*id);
+        for &e in &mt.body {
+            let el = &sim.pool.elems[e as usize];
+            if el.cortical && el.stress_seen && el.stress_mag > 0.3 {
+                sa += el.stress_align as f64;
+                sn += 1;
+            }
+            if el.cortical {
+                cortical += 1;
+                let d = el.dir;
+                let l2 = d.x * d.x + d.y * d.y;
+                if l2 > 1e-6 {
+                    q11 += (d.x * d.x - d.y * d.y) / l2;
+                    q12 += 2.0 * d.x * d.y / l2;
+                    qn += 1.0;
+                }
+            }
+        }
+        if n < 2 {
+            continue;
+        }
+        let mut i = 0;
+        while i + 1 < n {
+            let j = (i + stride).min(n - 1);
+            let ea = &sim.pool.elems[mt.body[i] as usize];
+            let eb = &sim.pool.elems[mt.body[j] as usize];
+            // Smooth the drawn path over a few subunits: the simulation's
+            // per-subunit random walk is a numerical device, and at close
+            // range it reads as kinks no stiff filament has.
+            let smooth = |k: usize| -> DVec3 {
+                let lo = k.saturating_sub(SMOOTH);
+                let hi = (k + SMOOTH).min(n - 1);
+                let w = (k - lo).min(hi - k);
+                let (a, b) = (k - w, k + w);
+                let mut acc = DVec3::ZERO;
+                for m in a..=b {
+                    acc += sim.pool.elems[mt.body[m] as usize].pos;
+                }
+                acc / (b - a + 1) as f64
+            };
+            let (pa, pb) = (smooth(i), smooth(j));
+            let mut flags = base_flags;
+            if ea.cortical {
+                flags |= FLAG_CORTICAL;
+            }
+            if ea.contact || eb.contact {
+                flags |= FLAG_BUNDLED;
+            }
+            if j == n - 1 {
+                flags |= FLAG_PLUS_END;
+            }
+            segs.push(Segment {
+                a: frame.to_render(pa).to_array(),
+                tip_dist: (n - 1 - i) as f32 * um,
+                b: frame.to_render(pb).to_array(),
+                minus_dist: i as f32 * um,
+                hash,
+                flags,
+                age: now - eb.born as f32,
+                stress: if eb.stress_seen { eb.stress_align } else { -1.0 },
+            });
+            i = j;
+        }
+    }
+    let lens = sim.lengths();
+    stats.mean_length_um = lens.iter().sum::<usize>() as f64 / lens.len().max(1) as f64 / UNITS_PER_UM;
+    stats.cortical_fraction = cortical as f64 / stats.subunits.max(1) as f64;
+    stats.stress_alignment = if sn > 0 { sa / sn as f64 } else { -1.0 };
+    stats.order_xy = if qn > 0.0 {
+        ((q11 / qn).powi(2) + (q12 / qn).powi(2)).sqrt()
+    } else {
+        0.0
+    };
+    Snapshot { segments: segs, stats }
+}

@@ -1,1 +1,6 @@
 /target
+.DS_Store
+/out/
+# Cell outlines are exported from unpublished data (see cells/README.md).
+/cells/*
+!/cells/README.md
