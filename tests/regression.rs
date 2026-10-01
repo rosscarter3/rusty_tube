@@ -1,12 +1,12 @@
 //! Statistical regression against the C++ tubulaton.
 //!
-//! Reference: 24 seeds of the C++ (build-cat, improve-correctness-and-english
+//! Reference: 8 seeds of the C++ (build-cat, improve-correctness-and-english
 //! branch) on the procedural:7 cell with configs/pavement_calibrated.ini,
-//! 1000 steps: 371 +/- 15 microtubules, 85 100 +/- 4 900 subunits (SD), and
-//! cortical fraction 0.995; the Rust port gave 375 and 85 300 on the same
-//! mesh. That mesh carried the neck stress field and predates the current
-//! mesher, so the bands below are wide (about 3 SD and then some): they catch
-//! a broken port, not a 2 % drift.
+//! 1000 steps: 294 +/- 13 microtubules and 47 900 +/- 3 600 subunits (SD),
+//! cortical fraction 0.990, 1.1 % of subunits beyond the membrane limit. The
+//! Rust port on the same mesh: 298 +/- 15 and 49 100 +/- 3 900. The bands
+//! below are about 3 SD: they catch a broken port, not a few per cent of
+//! drift.
 
 use rusty_tube::cellgen::{build_cell, CellSpec, Outline};
 use rusty_tube::params::Params;
@@ -37,8 +37,8 @@ fn matches_cpp_statistics() {
         .count() as f64
         / subunits as f64;
     eprintln!("MTs {n}, subunits {subunits}, cortical {cortical:.3}, outside {outside:.4}");
-    assert!((320..=430).contains(&n), "microtubule count {n}");
-    assert!((68_000..=102_000).contains(&subunits), "subunits {subunits}");
-    assert!(cortical > 0.98, "cortical fraction {cortical}");
-    assert!(outside < 0.02, "fraction outside the membrane {outside}");
+    assert!((255..=340).contains(&n), "microtubule count {n}");
+    assert!((37_000..=60_000).contains(&subunits), "subunits {subunits}");
+    assert!(cortical > 0.97, "cortical fraction {cortical}");
+    assert!(outside < 0.03, "fraction outside the membrane {outside}");
 }

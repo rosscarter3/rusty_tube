@@ -20,8 +20,8 @@ Source: `~/projects/pavement/external/tubulaton`, branch
 ## Validation
 
 The C++ (`build-cat/programme`) and the port were run on the same mesh and
-config (`configs/pavement_calibrated.ini`, a procedural pavement cell),
-24 seeds each, 1000 steps:
+config (`configs/pavement_calibrated.ini`, a procedural pavement cell from
+an earlier version of the generator), 24 seeds each, 1000 steps:
 
 | | C++ | Rust |
 |---|---|---|
@@ -35,7 +35,9 @@ config (`configs/pavement_calibrated.ini`, a procedural pavement cell),
 
 (mean ± standard error.) Cortical fraction 0.995 and escapes ~0.6 % in both.
 The port runs about 35× faster (1.1 s against 37 s for 3000 steps).
-`tests/regression.rs` keeps a coarse version of this check.
+A repeat on the current `procedural:7` cell (8 seeds) also agrees: 294 ± 13
+against 298 ± 15 microtubules, 47 900 ± 3 600 against 49 100 ± 3 900
+subunits (SD). `tests/regression.rs` keeps a coarse version of this check.
 
 The random streams differ (mt19937 vs xoshiro), so runs are equal in
 distribution, not bit for bit.

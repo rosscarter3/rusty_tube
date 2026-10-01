@@ -239,62 +239,154 @@ impl Outline {
         Ok(o)
     }
 
-    /// A procedural pavement cell: an irregular polygon (the cell's
-    /// neighbours) whose walls are each thrown into one to three
-    /// interdigitating lobes. `size_um` is the rough diameter.
+    /// A procedural pavement cell: a central body with six to nine curving
+    /// arms, each pinched into a neck at its base and swelling into a lobe
+    /// at its tip, some of them branching -- the jigsaw shape of a leaf
+    /// epidermal pavement cell. Built as a smooth union of discs and
+    /// capsules in a 2D distance field and contoured. `size_um` is the
+    /// rough diameter.
     pub fn procedural(seed: u64, size_um: f64) -> Outline {
         let mut rng = Rng::new(seed.max(1) as i64);
-        for _attempt in 0..200 {
-            let sides = 5 + rng.index(3); // 5-7 neighbours
-            let r0 = size_um * 0.5;
-            // Irregular convex-ish polygon.
-            let mut angles: Vec<f64> = (0..sides)
-                .map(|k| (k as f64 + 0.35 * rng.signed_unit()) * std::f64::consts::TAU / sides as f64)
-                .collect();
-            angles.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let corners: Vec<DVec2> = angles
-                .iter()
-                .map(|&a| DVec2::new(a.cos(), a.sin()) * r0 * (0.8 + 0.35 * rng.unit()))
-                .collect();
-            let mut pts = Vec::new();
-            for k in 0..sides {
-                let (a, b) = (corners[k], corners[(k + 1) % sides]);
-                let len = (b - a).length();
-                let normal = DVec2::new((b - a).y, -(b - a).x).normalize(); // outward for CCW
-                                                                            // Lobes per wall scale with wall length; alternating sign makes
-                                                                            // a lobe here an indentation of the neighbour.
-                let lobes = ((len / (size_um * 0.28)).round() as usize).clamp(1, 3);
-                let amp = (len / lobes as f64) * (0.22 + 0.12 * rng.unit());
-                let phase_sign = if rng.unit() < 0.5 { 1.0 } else { -1.0 };
-                let skew = 0.15 * rng.signed_unit();
-                let samples = 60;
-                for s in 0..samples {
-                    let t = s as f64 / samples as f64;
-                    // Envelope pins the wall at the three-way junctions.
-                    let env = (std::f64::consts::PI * t).sin().powf(0.8);
-                    let tt = (t + skew * (std::f64::consts::PI * t).sin()).clamp(0.0, 1.0);
-                    let wave = (std::f64::consts::PI * lobes as f64 * tt).sin();
-                    // Sharpen into a lobe with a narrow neck.
-                    let shaped = wave.signum() * wave.abs().powf(0.7);
-                    let off = amp * env * shaped * phase_sign;
-                    pts.push(a.lerp(b, t) + normal * off);
-                }
-            }
-            let mut o = Outline { pts }.smooth(6).resample(0.15);
-            o.make_ccw();
-            if !o.self_intersects() {
-                return o;
+        let s = size_um / 22.0;
+        let mut shapes: Vec<(DVec2, DVec2, f64)> = Vec::new(); // capsules (a, b, r); discs have a == b
+        let body = (3.2 + 1.6 * rng.unit()) * s;
+        shapes.push((
+            DVec2::ZERO,
+            DVec2::new(0.8 * rng.signed_unit() * s, 0.8 * rng.signed_unit() * s),
+            body,
+        ));
+        let n = 6 + rng.index(4);
+        let phase = rng.unit() * std::f64::consts::TAU;
+        for k in 0..n {
+            let theta = phase + (k as f64 + 0.3 * rng.signed_unit()) * std::f64::consts::TAU / n as f64;
+            let dir = DVec2::new(theta.cos(), theta.sin());
+            let perp = DVec2::new(-dir.y, dir.x);
+            let len = (5.5 + 4.0 * rng.unit()) * s;
+            let neck = (0.85 + 0.45 * rng.unit()) * s;
+            let tip_r = (1.5 + 0.8 * rng.unit()) * s;
+            let mid = dir * len * 0.55 + perp * 1.4 * rng.signed_unit() * s;
+            let end = dir * len + perp * 1.2 * rng.signed_unit() * s;
+            shapes.push((DVec2::ZERO, mid, neck));
+            shapes.push((mid, end, neck * 1.15));
+            shapes.push((end, end, tip_r));
+            if rng.unit() < 0.4 {
+                // A side lobe off the arm.
+                let side = if rng.unit() < 0.5 { 1.0 } else { -1.0 };
+                let bdir = (dir * 0.6 + perp * side).normalize();
+                let bend = end + bdir * (2.0 + 1.6 * rng.unit()) * s;
+                shapes.push((end, bend, neck));
+                shapes.push((bend, bend, tip_r * 0.85));
             }
         }
-        // Fallback: a gently lobed disc.
-        let pts = (0..400)
-            .map(|k| {
-                let t = k as f64 / 400.0 * std::f64::consts::TAU;
-                DVec2::new(t.cos(), t.sin()) * size_um * 0.5 * (1.0 + 0.15 * (7.0 * t).sin())
-            })
-            .collect();
-        Outline { pts }
+        let sdf = |p: DVec2| -> f64 {
+            // Polynomial smooth minimum: fillets the necks.
+            let k = 0.9 * s;
+            let mut d = f64::INFINITY;
+            for &(a, b, r) in &shapes {
+                let ab = b - a;
+                let t = if ab.length_squared() > 0.0 {
+                    ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let di = (p - (a + ab * t)).length() - r;
+                if d.is_infinite() {
+                    d = di;
+                } else {
+                    let h = (0.5 + 0.5 * (di - d) / k).clamp(0.0, 1.0);
+                    d = di * (1.0 - h) + d * h - k * h * (1.0 - h);
+                }
+            }
+            d
+        };
+        let o = contour_zero(&sdf, size_um * 0.75, 0.08 * s.max(0.5));
+        let mut o = o.resample(0.15);
+        o.make_ccw();
+        o
     }
+}
+
+/// The longest closed zero contour of a 2D field over [-half, half]^2, by
+/// marching squares.
+fn contour_zero(f: &dyn Fn(DVec2) -> f64, half: f64, h: f64) -> Outline {
+    let n = (2.0 * half / h).ceil() as usize + 1;
+    let at = |i: usize, j: usize| DVec2::new(-half + i as f64 * h, -half + j as f64 * h);
+    let v: Vec<f64> = (0..n * n).map(|k| f(at(k % n, k / n))).collect();
+    let val = |i: usize, j: usize| v[j * n + i];
+    // Edge ids: horizontal edge (i,j)-(i+1,j) = 2*(j*n+i), vertical (i,j)-(i,j+1) = 2*(j*n+i)+1.
+    let point = |e: usize| -> DVec2 {
+        let k = e / 2;
+        let (i, j) = (k % n, k / n);
+        let (a, b, pa, pb) = if e.is_multiple_of(2) {
+            (val(i, j), val(i + 1, j), at(i, j), at(i + 1, j))
+        } else {
+            (val(i, j), val(i, j + 1), at(i, j), at(i, j + 1))
+        };
+        pa.lerp(pb, a / (a - b))
+    };
+    let mut adj: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
+    let mut link = |a: usize, b: usize| {
+        adj.entry(a).or_default().push(b);
+        adj.entry(b).or_default().push(a);
+    };
+    for j in 0..n - 1 {
+        for i in 0..n - 1 {
+            let c = [val(i, j), val(i + 1, j), val(i + 1, j + 1), val(i, j + 1)];
+            let e = [
+                2 * (j * n + i),
+                2 * (j * n + i + 1) + 1,
+                2 * ((j + 1) * n + i),
+                2 * (j * n + i) + 1,
+            ];
+            let mut crossing = Vec::new();
+            for k in 0..4 {
+                if (c[k] < 0.0) != (c[(k + 1) % 4] < 0.0) {
+                    crossing.push(e[k]);
+                }
+            }
+            match crossing.len() {
+                2 => link(crossing[0], crossing[1]),
+                4 => {
+                    // Saddle: decide by the centre value.
+                    let centre = c.iter().sum::<f64>() / 4.0;
+                    if (centre < 0.0) == (c[0] < 0.0) {
+                        link(crossing[0], crossing[3]);
+                        link(crossing[1], crossing[2]);
+                    } else {
+                        link(crossing[0], crossing[1]);
+                        link(crossing[2], crossing[3]);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut seen = rustc_hash::FxHashSet::default();
+    let mut best: Vec<DVec2> = Vec::new();
+    let keys: Vec<usize> = adj.keys().copied().collect();
+    for start in keys {
+        if seen.contains(&start) {
+            continue;
+        }
+        let mut loop_pts = Vec::new();
+        let (mut prev, mut cur) = (usize::MAX, start);
+        loop {
+            seen.insert(cur);
+            loop_pts.push(point(cur));
+            let next = adj[&cur].iter().copied().find(|&x| x != prev && !seen.contains(&x));
+            match next {
+                Some(nx) => {
+                    prev = cur;
+                    cur = nx;
+                }
+                None => break,
+            }
+        }
+        if loop_pts.len() > best.len() {
+            best = loop_pts;
+        }
+    }
+    Outline { pts: best }
 }
 
 /// Signed distance to a closed polygon (negative inside).
@@ -424,6 +516,7 @@ impl PolySdf {
 /// The 3D field: rounded extrusion with a domed top face. Coordinates in um,
 /// the base periclinal face at z = 0.
 struct CellField<'a> {
+    bubble: &'a ShapeStress,
     poly: &'a PolySdf,
     spec: &'a CellSpec,
 }
@@ -432,15 +525,31 @@ impl CellField<'_> {
     fn eval_with(&self, p: DVec3, d2: f64) -> f64 {
         let s = self.spec;
         let r = s.edge_radius_um.min(0.49 * s.height_um);
-        // Dome rises away from the wall over a few micrometres. Divide the
-        // vertical gap by the slope so the field stays close to a true
-        // distance on the domed face (|grad| ~ 1), which the projection
-        // below relies on.
-        const L: f64 = 3.0;
-        let inward = (-d2).max(0.0);
-        let e = (-inward / L).exp();
-        let dome = s.dome_um * (1.0 - e);
-        let slope = s.dome_um * e / L;
+        // The outer face domes like an inflated membrane: its height follows
+        // the Prandtl solution u (laplacian u = -1, u = 0 on the outline),
+        // which is smooth everywhere. A dome built from the distance to the
+        // wall would carry a crease along the medial axis of every lobe.
+        // Dividing the vertical gap by the slope keeps the field close to a
+        // true distance (|grad| ~ 1), which the projection below relies on.
+        const U: f64 = 1.0;
+        let (u, gu) = self.bubble.u_at(p.truncate());
+        // Zero slope at the wall, so the dome does not fight the rounded rim.
+        let x = u.max(0.0) / U;
+        let e = (-x * x).exp();
+        // Fade the dome out near the wall using the exact wall distance: the
+        // interpolated u is least accurate there, where it has its steepest
+        // gradient, and the rim's rounding expects a flat top. The fade has
+        // zero slope at both ends, so it adds no crease.
+        const FADE: f64 = 1.4;
+        let t = ((-d2) / FADE).clamp(0.0, 1.0);
+        let fade = t * t * (3.0 - 2.0 * t);
+        let dfade = if t > 0.0 && t < 1.0 {
+            6.0 * t * (1.0 - t) / FADE
+        } else {
+            0.0
+        };
+        let dome = s.dome_um * (1.0 - e) * fade;
+        let slope = s.dome_um * (e * 2.0 * x / U * gu * fade + (1.0 - e) * dfade);
         let top = s.height_um + dome;
         let dz = ((p.z - top) / (1.0 + slope * slope).sqrt()).max(-p.z);
         // Rounded box in (wall distance, height) space.
@@ -487,7 +596,12 @@ pub fn build_cell(outline: &Outline, spec: &CellSpec) -> Result<Cell> {
         *p -= c;
     }
     let poly = PolySdf::new(&outline);
-    let field = CellField { poly: &poly, spec };
+    let bubble = ShapeStress::solve(&poly, 0.2);
+    let field = CellField {
+        bubble: &bubble,
+        poly: &poly,
+        spec,
+    };
 
     let h = spec.spacing_um;
     let (mut lo2, mut hi2) = (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY));
@@ -736,7 +850,7 @@ pub fn build_cell(outline: &Outline, spec: &CellSpec) -> Result<Cell> {
     mesh.point_scalars.insert("kappa".into(), kappa_v);
     mesh.point_scalars.insert("anticlinal".into(), wall_v);
     if spec.shape_stress {
-        let field = ShapeStress::solve(&poly, 0.2);
+        let field = &bubble;
         let mut strain = Vec::with_capacity(mesh.positions.len());
         let mut aniso = Vec::with_capacity(mesh.positions.len());
         for p in &mesh.positions {
@@ -783,6 +897,8 @@ struct ShapeStress {
     ny: usize,
     /// Smoothed Hessian (uxx, uyy, uxy) per node.
     hess: Vec<[f64; 3]>,
+    /// The solution itself, for the dome.
+    u: Vec<f64>,
 }
 
 impl ShapeStress {
@@ -888,7 +1004,43 @@ impl ShapeStress {
             nx,
             ny,
             hess: smooth,
+            u,
         }
+    }
+
+    /// u and |grad u| at a point, by Catmull-Rom bicubic interpolation
+    /// (C1, so the dome has smooth normals).
+    fn u_at(&self, p: DVec2) -> (f64, f64) {
+        let f = |q: DVec2| -> f64 {
+            let g = (q - self.lo) / self.h;
+            let (ix, iy) = (g.x.floor() as i64, g.y.floor() as i64);
+            let (tx, ty) = (g.x - ix as f64, g.y - iy as f64);
+            let w = |t: f64| {
+                [
+                    0.5 * (-t * t * t + 2.0 * t * t - t),
+                    0.5 * (3.0 * t * t * t - 5.0 * t * t + 2.0),
+                    0.5 * (-3.0 * t * t * t + 4.0 * t * t + t),
+                    0.5 * (t * t * t - t * t),
+                ]
+            };
+            let (wx, wy) = (w(tx), w(ty));
+            let mut acc = 0.0;
+            for (j, wyj) in wy.iter().enumerate() {
+                for (i, wxi) in wx.iter().enumerate() {
+                    let x = ix + i as i64 - 1;
+                    let y = iy + j as i64 - 1;
+                    if x < 0 || y < 0 || x >= self.nx as i64 || y >= self.ny as i64 {
+                        continue;
+                    }
+                    acc += wxi * wyj * self.u[y as usize * self.nx + x as usize];
+                }
+            }
+            acc
+        };
+        let e = 1e-3;
+        let gx = (f(p + DVec2::X * e) - f(p - DVec2::X * e)) / (2.0 * e);
+        let gy = (f(p + DVec2::Y * e) - f(p - DVec2::Y * e)) / (2.0 * e);
+        (f(p), (gx * gx + gy * gy).sqrt())
     }
 
     /// Principal stress direction and anisotropy in [0, 1] at a point.
@@ -967,6 +1119,17 @@ mod stress_tests {
                     DVec2::new(t.cos(), t.sin()) * 6.0
                 })
                 .collect(),
+        }
+    }
+
+    #[test]
+    fn bubble_matches_disc_solution() {
+        let poly = PolySdf::new(&disc());
+        let f = ShapeStress::solve(&poly, 0.2);
+        for r in [0.0, 3.0, 5.0, 5.9] {
+            let (u, g) = f.u_at(DVec2::new(r, 0.0));
+            let exact = (36.0 - r * r) / 4.0;
+            eprintln!("r {r}: u {u:.3} exact {exact:.3} |grad| {g:.3} exact {:.3}", r / 2.0);
         }
     }
 

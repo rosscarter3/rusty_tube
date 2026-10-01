@@ -9,17 +9,36 @@ renderer.
   [PORTING.md](PORTING.md)) and runs about 35× faster. It reads the same
   `.ini` configs and writes the same report and binary VTK files.
 * **Geometry**: closed 3D pavement cells built from a 2D outline (segmented
-  imaging, the pavesim tissue model, or procedural), as a rounded, domed
-  extrusion meshed by surface nets with exact normals.
+  imaging, the pavesim tissue model, or procedural), as a rounded extrusion
+  whose outer face domes like an inflated membrane, meshed by surface nets
+  with exact normals.
 * **Stress fields**: an imposed neck field, or a shape-derived field from an
   inflated-membrane model whose magnitude is the local stress anisotropy.
 * **Rendering**: real-time and offline, in two looks (see below).
+
+![The interactive viewer](docs/img/ui_hero.jpg)
+
+<p align="center"><img src="docs/img/selforganisation.gif" width="480" alt="A cortical array self-organising over 15 simulated minutes"></p>
+
+## Gallery
+
+All images are of generated cells (`--outline procedural:12`), rendered
+with `rusty_tube render`.
+
+| | |
+|---|---|
+| ![Dense cortical array coloured by orientation](docs/img/hero.jpg) | ![Close-up of a bundle with protofilaments and the tubulin lattice](docs/img/closeup.jpg) |
+| **Hero look**, colour = filament orientation in the leaf plane, thin-lens depth of field | **Close-up** at true 25 nm diameter: 13 protofilaments and the 8 nm dimer lattice |
+| ![Microtubules aligning with a shape-derived stress field](docs/img/stress.jpg) | ![Dynamic instability: growing and shrinking ends](docs/img/dynamics.jpg) |
+| **Stress alignment** (`--shape-stress --preset stress`): glyphs show the principal stress axis (length ∝ anisotropy); orange filaments lie along it, blue across | **Dynamics**: growing filaments pale with glowing EB1-like plus-end comets, shrinking ones red |
+| ![Simulated confocal section](docs/img/confocal.jpg) | ![The viewer in its confocal look](docs/img/ui_confocal.jpg) |
+| **Confocal look**: GFP-tubulin and a membrane dye in an optical section through the outer face | **The viewer** in the confocal look |
 
 ## Quick start
 
 ```sh
 cargo run --release -- view                       # interactive
-cargo run --release -- view --preset dense
+cargo run --release -- view --outline procedural:12 --preset dense --warmup 12000
 cargo run --release -- render --outline procedural:7 --steps 12000 --out out/cell.png
 cargo run --release -- render --outline procedural:7 --shape-stress --preset stress \
     --steps 1 --frames 480 --every 25 --orbit 0.3 --colour 4 -r stress_tint=1 \
@@ -29,7 +48,9 @@ cargo run --release -- mesh --outline cell.csv --out cell.vtk --neck-stress
 ```
 
 `--outline` takes a CSV of x,y in µm, a pavesim JSON with an `outline`, or
-`procedural:SEED`. Real outlines can be exported from pavesim's leaf
+`procedural:SEED`: a generated pavement cell, a central body with six to
+nine curving arms pinched into necks and swelling into lobes, some
+branching. Real outlines can be exported from pavesim's leaf
 segmentations into `cells/real/`, which is git-ignored because that imaging
 is unpublished.
 

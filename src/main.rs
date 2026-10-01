@@ -87,6 +87,21 @@ enum Cmd {
         /// Save the window to a PNG after N frames and exit.
         #[arg(long, num_args = 2, value_names = ["FRAMES", "PNG"])]
         capture_after: Vec<String>,
+        /// Simulate this many steps before showing the cell.
+        #[arg(long, default_value_t = 0)]
+        warmup: i64,
+        #[arg(long, value_enum, default_value = "hero")]
+        look: LookArg,
+        /// 0 orientation, 1 dynamics, 2 per filament, 3 age, 4 stress, 5 plain
+        #[arg(long, default_value_t = 0)]
+        colour: u32,
+        /// Renderer settings, as for `render`.
+        #[arg(short = 'r', long = "render-set")]
+        rset: Vec<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        yaw: Option<f32>,
+        #[arg(long)]
+        pitch: Option<f32>,
     },
     /// Simulate, then render stills or a time-lapse to PNG.
     Render {
@@ -269,7 +284,26 @@ fn main() -> Result<()> {
             rusty_tube::vtk::write_surface(&out, &cell.mesh, &cell.normals)?;
             println!("wrote {}", out.display());
         }
-        Cmd::View { sim: a, capture_after } => {
+        Cmd::View {
+            sim: a,
+            capture_after,
+            warmup,
+            look,
+            colour,
+            rset,
+            yaw,
+            pitch,
+        } => {
+            let mut settings = Settings {
+                colour_mode: colour,
+                ..Default::default()
+            };
+            if let LookArg::Fluor = look {
+                settings.look = Look::Fluorescence;
+                settings.background = 1;
+                settings.bloom = 0.15;
+            }
+            apply_render_sets(&mut settings, &rset)?;
             let capture = match capture_after.as_slice() {
                 [n, p] => Some((n.parse()?, PathBuf::from(p))),
                 _ => None,
@@ -280,6 +314,13 @@ fn main() -> Result<()> {
                 .or_else(|| if a.config.is_none() { Some(default_cell()) } else { None });
             rusty_tube::viewer::run(rusty_tube::viewer::SimSpec {
                 capture,
+                warmup,
+                settings,
+                angles: if yaw.is_some() || pitch.is_some() {
+                    Some((yaw.unwrap_or(-0.9), pitch.unwrap_or(0.75)))
+                } else {
+                    None
+                },
                 config: a.config,
                 outline,
                 sets,

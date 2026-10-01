@@ -24,6 +24,12 @@ pub struct SimSpec {
     /// Save the window to this PNG after this many frames, then exit
     /// (for documentation and testing).
     pub capture: Option<(u32, PathBuf)>,
+    /// Simulate this many steps before showing anything.
+    pub warmup: i64,
+    /// Initial renderer settings.
+    pub settings: Settings,
+    /// Initial camera (yaw, pitch) in radians.
+    pub angles: Option<(f32, f32)>,
     pub config: Option<PathBuf>,
     pub outline: Option<String>,
     pub sets: Vec<String>,
@@ -94,8 +100,15 @@ fn sim_thread(shared: Arc<Shared>, spec: SimSpec) {
                         (s.membrane.total_area() / (125.0 * 125.0)) as i64,
                         s.rng.seed()
                     );
-                    sim = Some(s);
+                    let mut s = s;
                     t = 0;
+                    while t < spec.warmup {
+                        if s.tick(t, false).is_err() {
+                            break;
+                        }
+                        t += 1;
+                    }
+                    sim = Some(s);
                     last_publish = Instant::now() - Duration::from_secs(1);
                 }
                 Err(e) => *shared.status.lock().unwrap() = format!("error: {e:#}"),
@@ -219,10 +232,26 @@ impl App {
         let s2 = shared.clone();
         let sp = spec.clone();
         let thread = std::thread::spawn(move || sim_thread(s2, sp));
-        let d = crate::params::Params::from_str_config(setup::DEFAULT_CONFIG).unwrap_or_default();
+        let mut d = match &spec.config {
+            Some(c) => crate::params::Params::from_file(c).unwrap_or_default(),
+            None => crate::params::Params::from_str_config(setup::DEFAULT_CONFIG).unwrap_or_default(),
+        };
+        // Show what the run actually uses: presets and -s overrides.
+        for kv in &spec.sets {
+            if let Some((k, v)) = kv.split_once('=') {
+                let _ = d.fill(k, v);
+            }
+        }
         let ui = Ui {
-            settings: Settings::default(),
-            camera: OrbitCamera::framing(glam::Vec3::splat(-10.0), glam::Vec3::splat(10.0)),
+            settings: spec.settings.clone(),
+            camera: {
+                let mut c = OrbitCamera::framing(glam::Vec3::splat(-10.0), glam::Vec3::splat(10.0));
+                if let Some((yaw, pitch)) = spec.angles {
+                    c.yaw = yaw;
+                    c.pitch = pitch;
+                }
+                c
+            },
             framed: false,
             stats: SceneStats::default(),
             capsules: 0,
@@ -382,131 +411,135 @@ impl App {
                         );
                         ui.separator();
 
-                        ui.collapsing("Simulation", |ui| {
-                            ui.horizontal(|ui| {
-                                let running = shared.running.load(Ordering::Relaxed);
-                                if ui.button(if running { "⏸ pause" } else { "▶ run" }).clicked() {
-                                    shared.running.store(!running, Ordering::Relaxed);
-                                }
-                                if ui.button("⟲ restart").clicked() {
-                                    reset = true;
-                                }
-                            });
-                            if ui
-                                .add(
-                                    egui::Slider::new(&mut ui_state.steps_per_frame, 1..=500)
-                                        .logarithmic(true)
-                                        .text("steps / frame"),
-                                )
-                                .changed()
-                            {
-                                shared
-                                    .steps_per_frame
-                                    .store(ui_state.steps_per_frame, Ordering::Relaxed);
-                            }
-                            egui::ComboBox::from_label("cell")
-                                .selected_text(short(&ui_state.cell))
-                                .width(220.0)
-                                .show_ui(ui, |ui| {
-                                    for c in &ui_state.cells {
-                                        if ui.selectable_label(*c == ui_state.cell, short(c)).clicked() {
-                                            ui_state.cell = c.clone();
-                                            reset = true;
-                                        }
+                        egui::CollapsingHeader::new("Simulation")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    let running = shared.running.load(Ordering::Relaxed);
+                                    if ui.button(if running { "⏸ pause" } else { "▶ run" }).clicked() {
+                                        shared.running.store(!running, Ordering::Relaxed);
+                                    }
+                                    if ui.button("⟲ restart").clicked() {
+                                        reset = true;
                                     }
                                 });
-                            ui.horizontal(|ui| {
-                                ui.add(
-                                    egui::DragValue::new(&mut ui_state.seed)
-                                        .range(1..=1_000_000)
-                                        .prefix("seed "),
-                                );
-                                if ui.checkbox(&mut ui_state.neck_stress, "neck stress").changed() {
-                                    reset = true;
-                                }
-                                if ui.checkbox(&mut ui_state.shape_stress, "shape stress").changed() {
-                                    reset = true;
-                                }
-                            });
-                            if ui
-                                .add(egui::Slider::new(&mut ui_state.stride, 1..=16).text("subunits / capsule"))
-                                .changed()
-                            {
-                                cmds.push(Cmd::Stride(ui_state.stride));
-                            }
-                        });
-
-                        ui.collapsing("Dynamics (per 0.1 s step)", |ui| {
-                            let mut set = |ui: &mut egui::Ui,
-                                           v: &mut f64,
-                                           range: std::ops::RangeInclusive<f64>,
-                                           key: &str,
-                                           label: &str,
-                                           log: bool| {
                                 if ui
-                                    .add(egui::Slider::new(v, range).logarithmic(log).text(label))
+                                    .add(
+                                        egui::Slider::new(&mut ui_state.steps_per_frame, 1..=500)
+                                            .logarithmic(true)
+                                            .text("steps / frame"),
+                                    )
                                     .changed()
                                 {
-                                    cmds.push(Cmd::Set(key.into(), format!("{v}")));
+                                    shared
+                                        .steps_per_frame
+                                        .store(ui_state.steps_per_frame, Ordering::Relaxed);
                                 }
-                            };
-                            set(
-                                ui,
-                                &mut ui_state.p_shrink,
-                                0.0..=0.01,
-                                "proba_shrink",
-                                "catastrophe",
-                                true,
-                            );
-                            set(ui, &mut ui_state.p_rescue, 0.0..=0.01, "proba_rescue", "rescue", true);
-                            set(
-                                ui,
-                                &mut ui_state.p_cross_shrink,
-                                0.0..=1.0,
-                                "proba_crossmicro_shrink",
-                                "catastrophe on steep encounter",
-                                false,
-                            );
-                            set(
-                                ui,
-                                &mut ui_state.p_cross_cut,
-                                0.0..=0.01,
-                                "proba_crossmicro_cut",
-                                "katanin severing at crossovers",
-                                true,
-                            );
-                            set(
-                                ui,
-                                &mut ui_state.angle_mb,
-                                0.1..=1.6,
-                                "Angle_mb_limite",
-                                "max turn at membrane (rad)",
-                                false,
-                            );
-                            set(
-                                ui,
-                                &mut ui_state.influence,
-                                0.0..=2.0,
-                                "part_influence_influence",
-                                "stress steering",
-                                false,
-                            );
-                            if ui
-                                .add(
-                                    egui::Slider::new(&mut ui_state.nucleation, 0.0..=4.0)
-                                        .text("nucleation / step (0 = config)"),
-                                )
-                                .changed()
-                                && ui_state.nucleation > 0.0
-                            {
-                                cmds.push(Cmd::Set(
-                                    "proba_initialisation_par_step".into(),
-                                    format!("{}", ui_state.nucleation),
-                                ));
-                            }
-                        });
+                                egui::ComboBox::from_label("cell")
+                                    .selected_text(short(&ui_state.cell))
+                                    .width(220.0)
+                                    .show_ui(ui, |ui| {
+                                        for c in &ui_state.cells {
+                                            if ui.selectable_label(*c == ui_state.cell, short(c)).clicked() {
+                                                ui_state.cell = c.clone();
+                                                reset = true;
+                                            }
+                                        }
+                                    });
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::DragValue::new(&mut ui_state.seed)
+                                            .range(1..=1_000_000)
+                                            .prefix("seed "),
+                                    );
+                                    if ui.checkbox(&mut ui_state.neck_stress, "neck stress").changed() {
+                                        reset = true;
+                                    }
+                                    if ui.checkbox(&mut ui_state.shape_stress, "shape stress").changed() {
+                                        reset = true;
+                                    }
+                                });
+                                if ui
+                                    .add(egui::Slider::new(&mut ui_state.stride, 1..=16).text("subunits / capsule"))
+                                    .changed()
+                                {
+                                    cmds.push(Cmd::Stride(ui_state.stride));
+                                }
+                            });
 
-                        ui.collapsing("Look", |ui| {
+                        egui::CollapsingHeader::new("Dynamics (per 0.1 s step)")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                let mut set = |ui: &mut egui::Ui,
+                                               v: &mut f64,
+                                               range: std::ops::RangeInclusive<f64>,
+                                               key: &str,
+                                               label: &str,
+                                               log: bool| {
+                                    if ui
+                                        .add(egui::Slider::new(v, range).logarithmic(log).text(label))
+                                        .changed()
+                                    {
+                                        cmds.push(Cmd::Set(key.into(), format!("{v}")));
+                                    }
+                                };
+                                set(
+                                    ui,
+                                    &mut ui_state.p_shrink,
+                                    0.0..=0.01,
+                                    "proba_shrink",
+                                    "catastrophe",
+                                    true,
+                                );
+                                set(ui, &mut ui_state.p_rescue, 0.0..=0.01, "proba_rescue", "rescue", true);
+                                set(
+                                    ui,
+                                    &mut ui_state.p_cross_shrink,
+                                    0.0..=1.0,
+                                    "proba_crossmicro_shrink",
+                                    "catastrophe on steep encounter",
+                                    false,
+                                );
+                                set(
+                                    ui,
+                                    &mut ui_state.p_cross_cut,
+                                    0.0..=0.01,
+                                    "proba_crossmicro_cut",
+                                    "katanin severing at crossovers",
+                                    true,
+                                );
+                                set(
+                                    ui,
+                                    &mut ui_state.angle_mb,
+                                    0.1..=1.6,
+                                    "Angle_mb_limite",
+                                    "max turn at membrane (rad)",
+                                    false,
+                                );
+                                set(
+                                    ui,
+                                    &mut ui_state.influence,
+                                    0.0..=2.0,
+                                    "part_influence_influence",
+                                    "stress steering",
+                                    false,
+                                );
+                                if ui
+                                    .add(
+                                        egui::Slider::new(&mut ui_state.nucleation, 0.0..=4.0)
+                                            .text("nucleation / step (0 = config)"),
+                                    )
+                                    .changed()
+                                    && ui_state.nucleation > 0.0
+                                {
+                                    cmds.push(Cmd::Set(
+                                        "proba_initialisation_par_step".into(),
+                                        format!("{}", ui_state.nucleation),
+                                    ));
+                                }
+                            });
+
+                        egui::CollapsingHeader::new("Look").default_open(true).show(ui, |ui| {
                             let s = &mut ui_state.settings;
                             ui.horizontal(|ui| {
                                 ui.selectable_value(&mut s.look, Look::Hero, "Hero");
@@ -733,7 +766,9 @@ impl App {
                 .forget_lifetime();
             g.egui_renderer.render(&mut pass, &prims, &sd);
         }
-        self.frames += 1;
+        if self.seen_version > 0 {
+            self.frames += 1;
+        }
         let capture = match &self.spec.capture {
             Some((n, path)) if self.frames == *n => Some(path.clone()),
             _ => None,
