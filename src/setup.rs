@@ -47,7 +47,19 @@ pub fn preset(name: &str) -> anyhow::Result<Vec<String>> {
             "part_influence_influence=0.005".into(),
             "influence_ref=1.0".into(),
         ],
-        other => anyhow::bail!("unknown preset {other} (calibrated, dense, stress)"),
+        // dense, plus cellulose synthase complexes, with microtubule rescue
+        // set so that the chance co-localisation of CSCs with microtubules
+        // matches the measured 43 % (Li et al. 2012): 0.03 /s, within the
+        // measured 0.007-0.08 /s. Wild-type co-localisation is then a
+        // prediction (64 % vs 73 +/- 4 % measured).
+        "cellulose" => vec![
+            "proba_crossmicro_shrink=0.4".into(),
+            "Angle_mb_limite=1.0".into(),
+            "self_encounters=0".into(),
+            "proba_rescue=0.003".into(),
+            "csc_enable=1".into(),
+        ],
+        other => anyhow::bail!("unknown preset {other} (calibrated, dense, stress, cellulose)"),
     })
 }
 

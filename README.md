@@ -65,6 +65,7 @@ at up to 4× with up to 1024 samples), `c` to switch look.
 | `calibrated` (default) | pavesim's calibration: 1 step = 0.1 s at 0.08 µm/s growth, measured catastrophe, rescue and nucleation rates |
 | `dense` | illustrative: catastrophe on 40 % of steep encounters (Dixit & Cyr 2004), a 57° membrane turn limit instead of 40°, and no self-encounters (`self_encounters=0`, see below). In lobed cells the 40° rule causes most catastrophes, so this array is about 3× denser |
 | `stress` | `dense` plus steering by the stress field, with weight proportional to the local field magnitude (`part_influence_influence=0.005`, `influence_ref=1`) |
+| `cellulose` | `dense` plus cellulose synthase complexes, with microtubule rescue at 0.03 /s, set from the measured chance co-localisation (see below) |
 
 ## Self-encounters
 
@@ -107,30 +108,39 @@ tubulaton.
 | lifetime in the membrane | 7 min | measured (Sampathkumar et al. 2013) |
 | density | 1 per µm² at steady state | measured (Sampathkumar et al. 2013); sets insertion = density / lifetime |
 | pause after insertion | 1 min | measured (Gutierrez et al. 2009) |
-| insertion next to microtubules | 80 % | **assumed**: "preferentially" in Gutierrez et al. 2009 |
+| insertion next to microtubules | 80 % with CSI1, none without | **assumed** value: "preferentially" in Gutierrez et al. 2009; lost in *csi1* (Zhu et al. 2023) |
+| guidance update interval | 5 s | numerical: a complex moves about 30 nm in that time |
 | capture distance / angle | 0.1 µm / 40° | **assumed** |
 | autonomous (fibril) guidance | 0.2 | **assumed**; qualitative in Chan & Coen 2020 |
 | crystallisation time | 30 min | **assumed**: there is no kinetic model of primary-wall crystallinity; treat it as a placeholder to compare with bulk measurements |
 
-Against Li et al. 2012 (`cargo run --release --example csc_stats`, 40 min,
-`dense` preset, `procedural:12`):
+### Validation against Li et al. 2012
 
-| | CSCs co-localised with MTs | chance |
+Li et al. 2012 counted CESA particles co-aligned with microtubules in
+wild type and *csi1*, and the level expected by chance. The chance level
+depends only on how much microtubule there is, so it is used to set the one
+free microtubule parameter. Microtubule rescue goes to 0.03 /s, inside the
+measured range of about 0.007–0.08 /s (the calibrated set uses 0.007 /s).
+That gives a chance level of 43 %, as measured. Co-localisation in wild type
+and *csi1* is then a prediction (`--preset cellulose`; `cargo run --release
+--example csc_stats -- proba_rescue=0.003`, 40 min, 3 seeds):
+
+| | model | measured |
 |---|---|---|
-| wild type, measured | 73 ± 4 % | 43 ± 6 % |
-| wild type, model | 45 % | 36 % |
-| *csi1*, measured | 47 ± 11 % | 43 ± 6 % |
-| *csi1*, model | 42 % | 36 % |
+| chance level (fitted) | 43.3 ± 0.6 % | 43 ± 6 % |
+| wild type | 63.7 ± 1.2 % | 73 ± 4 % |
+| *csi1* | 43.7 ± 0.6 % | 47 ± 11 % |
 
-*csi1* matches: co-localisation is close to chance. Wild-type enrichment is
-in the right direction but too weak. The likely reason is the microtubule
-array: in this geometry it is sparser and shorter-lived than the hypocotyl
-arrays the data come from. A tethered complex loses its track whenever its
-microtubule depolymerises. The deposited cellulose follows the microtubules
-better with the tether than without (orientation agreement 0.62 vs 0.58,
-where 0.5 is chance). Without the tether the cellulose is more ordered at
-the 1 µm scale (0.69 vs 0.61): untethered complexes run straight and follow
-existing fibrils.
+*csi1* matches, and so does its mechanism. CSI1 is also needed to deliver
+complexes to microtubules: in *csi1* the microtubule-associated delivery
+compartments are rarely seen (Zhu et al. 2023). So in the model *csi1* loses
+both the tether and the insertion bias. Wild type is within 2 SD of the
+measurement but about 9 points low. The model also predicts that wall
+cellulose follows the microtubules in wild type but not in *csi1*:
+orientation agreement 0.81 vs 0.49, where 0.5 is chance.
+
+With the calibrated rescue rate the array is too sparse for this
+comparison: chance 36 %, wild type 45 %.
 
 Rendering: complexes are glowing beads, dim while paused. Microfibrils are
 thin tubes, teal when new and warm white when crystalline. In the confocal

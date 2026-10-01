@@ -123,26 +123,7 @@ pub struct Wall {
 impl Wall {
     /// Principal fibril direction and order (0 isotropic .. 1 aligned) at a vertex.
     pub fn principal(&self, v: usize) -> (DVec3, f64) {
-        let [xx, yy, zz, xy, xz, yz] = self.q[v];
-        let tr = xx + yy + zz;
-        if tr <= 0.0 {
-            return (DVec3::ZERO, 0.0);
-        }
-        // Power iteration on the 3x3 tensor.
-        let m = |d: DVec3| {
-            DVec3::new(
-                xx * d.x + xy * d.y + xz * d.z,
-                xy * d.x + yy * d.y + yz * d.z,
-                xz * d.x + yz * d.y + zz * d.z,
-            )
-        };
-        let mut d = DVec3::new(1.0, 0.7, 0.3).normalize();
-        for _ in 0..24 {
-            d = m(d).normalize_or(DVec3::X);
-        }
-        let lambda = d.dot(m(d)) / tr;
-        // For in-surface fibrils the tensor is effectively 2D: order 2*lambda - 1.
-        (d, (2.0 * lambda - 1.0).clamp(0.0, 1.0))
+        principal_axis(self.q[v])
     }
 
     /// um of cellulose per um^2 of wall at a vertex.
@@ -207,6 +188,45 @@ impl CorticalIndex {
             }
         }
     }
+}
+
+/// Largest eigenvector and in-surface order (lambda1 - lambda2) / trace of a
+/// symmetric 3x3 orientation tensor (xx, yy, zz, xy, xz, yz), in closed form
+/// (trigonometric eigenvalues, eigenvector from cross products).
+pub fn principal_axis(q: [f64; 6]) -> (DVec3, f64) {
+    let [xx, yy, zz, xy, xz, yz] = q;
+    let tr = xx + yy + zz;
+    if tr <= 0.0 {
+        return (DVec3::ZERO, 0.0);
+    }
+    let p1 = xy * xy + xz * xz + yz * yz;
+    let mean = tr / 3.0;
+    let (axx, ayy, azz) = (xx - mean, yy - mean, zz - mean);
+    let p2 = axx * axx + ayy * ayy + azz * azz + 2.0 * p1;
+    if p2 <= 1e-30 * tr * tr {
+        return (DVec3::ZERO, 0.0); // isotropic
+    }
+    let p = (p2 / 6.0).sqrt();
+    // det(B) / 2 with B = (A - mean I) / p
+    let det = axx * (ayy * azz - yz * yz) - xy * (xy * azz - yz * xz) + xz * (xy * yz - ayy * xz);
+    let r = (det / (2.0 * p * p * p)).clamp(-1.0, 1.0);
+    let phi = r.acos() / 3.0;
+    let l1 = mean + 2.0 * p * phi.cos();
+    let l3 = mean + 2.0 * p * (phi + 2.0 * std::f64::consts::PI / 3.0).cos();
+    let l2 = tr - l1 - l3;
+    // Eigenvector of l1: the largest cross product of two rows of A - l1 I.
+    let r0 = DVec3::new(xx - l1, xy, xz);
+    let r1 = DVec3::new(xy, yy - l1, yz);
+    let r2 = DVec3::new(xz, yz, zz - l1);
+    let (c01, c02, c12) = (r0.cross(r1), r0.cross(r2), r1.cross(r2));
+    let mut d = c01;
+    if c02.length_squared() > d.length_squared() {
+        d = c02;
+    }
+    if c12.length_squared() > d.length_squared() {
+        d = c12;
+    }
+    (d.normalize_or_zero(), ((l1 - l2) / tr).clamp(0.0, 1.0))
 }
 
 #[derive(Clone, Debug, Default)]
@@ -344,7 +364,11 @@ impl CscLayer {
     fn insert(&mut self, membrane: &Membrane, pool: &ElementPool, rng: &mut Rng, t: i64) {
         // At a microtubule, or anywhere on the membrane per unit area.
         let mut site = None;
-        if rng.unit() < self.p.mt_insertion_bias && pool.live > 0 {
+        // Delivery to microtubules needs CSI1 too: in csi1 the
+        // microtubule-associated delivery compartments (SmaCCs/MASCs) are
+        // rarely seen (Zhu et al. 2023), so insertion is unbiased.
+        let bias = if self.p.tether { self.p.mt_insertion_bias } else { 0.0 };
+        if rng.unit() < bias && pool.live > 0 {
             for _ in 0..32 {
                 let k = rng.index(pool.elems.len());
                 let e = &pool.elems[k];
@@ -688,6 +712,26 @@ mod tests {
     use crate::params::Params;
     use crate::setup::DEFAULT_CONFIG;
     use crate::sim::Sim;
+
+    #[test]
+    fn principal_axis_matches_construction() {
+        // Fibrils mostly along x with some along y: order (3 - 1) / 4.
+        let d = glam::DVec3::new(1.0, 2.0, 0.5).normalize();
+        let e = glam::DVec3::new(-2.0, 1.0, 0.0).normalize();
+        let mut q = [0.0; 6];
+        for (v, w) in [(d, 3.0), (e, 1.0)] {
+            q[0] += w * v.x * v.x;
+            q[1] += w * v.y * v.y;
+            q[2] += w * v.z * v.z;
+            q[3] += w * v.x * v.y;
+            q[4] += w * v.x * v.z;
+            q[5] += w * v.y * v.z;
+        }
+        let (axis, order) = super::principal_axis(q);
+        assert!(axis.dot(d).abs() > 0.999, "axis {axis:?}");
+        assert!((order - 0.5).abs() < 1e-9, "order {order}");
+        assert_eq!(super::principal_axis([1.0, 1.0, 1.0, 0.0, 0.0, 0.0]).1, 0.0);
+    }
 
     #[test]
     fn density_speed_and_membrane_confinement() {

@@ -212,6 +212,7 @@ fn default_cell() -> String {
 }
 
 fn main() -> Result<()> {
+    rusty_tube::qos::user_initiated();
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Run { config, set } => {

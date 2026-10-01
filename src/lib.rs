@@ -5,6 +5,7 @@
 pub mod cellgen;
 pub mod mesh;
 pub mod params;
+pub mod qos;
 pub mod render;
 pub mod rng;
 pub mod setup;

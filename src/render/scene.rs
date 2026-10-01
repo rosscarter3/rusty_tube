@@ -82,6 +82,7 @@ pub struct SceneStats {
     /// (0.5 = random in the plane), or -1 without a stress field.
     pub stress_alignment: f64,
     pub seconds_per_step: f64,
+    pub snapshot_ms: f64,
     pub cscs: usize,
     pub csc_density: f64,
     /// Fraction of CSC positions within capture range of a microtubule.
@@ -211,68 +212,73 @@ pub fn snapshot(sim: &Sim, frame: &Frame, stride: usize) -> Snapshot {
         subunits: sim.n_elements(),
         ..Default::default()
     };
-    let (mut q11, mut q12, mut qn) = (0.0f64, 0.0f64, 0.0f64);
-    let mut cortical = 0usize;
-    let (mut sa, mut sn) = (0.0f64, 0usize);
+    #[derive(Default)]
+    struct Part {
+        segs: Vec<Segment>,
+        growing: usize,
+        shrinking: usize,
+        q11: f64,
+        q12: f64,
+        qn: f64,
+        cortical: usize,
+        sa: f64,
+        sn: usize,
+    }
     let now = sim.time as f32;
-    for (id, mt) in &sim.mts {
+    let mts: Vec<(&u32, &crate::sim::Microtubule)> = sim.mts.iter().collect();
+    let per_mt = |(id, mt): &(&u32, &crate::sim::Microtubule)| -> Part {
+        let mut part = Part::default();
         let n = mt.body.len();
-        if mt.gr_st_plus == 1 {
-            stats.growing += 1;
-        } else if mt.gr_st_plus == -1 {
-            stats.shrinking += 1;
-        }
         let mut base_flags = 0;
         if mt.gr_st_plus == 1 {
+            part.growing = 1;
             base_flags |= FLAG_GROWING;
-        }
-        if mt.gr_st_plus == -1 {
+        } else if mt.gr_st_plus == -1 {
+            part.shrinking = 1;
             base_flags |= FLAG_SHRINKING;
         }
         if mt.gr_st_moins == -1 {
             base_flags |= FLAG_TREADMILL;
         }
-        let hash = hash32(*id);
+        let hash = hash32(**id);
+        // Prefix sums of positions, for O(1) path smoothing.
+        let mut prefix = Vec::with_capacity(n + 1);
+        prefix.push(DVec3::ZERO);
         for &e in &mt.body {
             let el = &sim.pool.elems[e as usize];
+            prefix.push(*prefix.last().unwrap() + el.pos);
             if el.cortical && el.stress_seen && el.stress_mag > 0.3 {
-                sa += el.stress_align as f64;
-                sn += 1;
+                part.sa += el.stress_align as f64;
+                part.sn += 1;
             }
             if el.cortical {
-                cortical += 1;
+                part.cortical += 1;
                 let d = el.dir;
                 let l2 = d.x * d.x + d.y * d.y;
                 if l2 > 1e-6 {
-                    q11 += (d.x * d.x - d.y * d.y) / l2;
-                    q12 += 2.0 * d.x * d.y / l2;
-                    qn += 1.0;
+                    part.q11 += (d.x * d.x - d.y * d.y) / l2;
+                    part.q12 += 2.0 * d.x * d.y / l2;
+                    part.qn += 1.0;
                 }
             }
         }
         if n < 2 {
-            continue;
+            return part;
         }
+        // Smooth the drawn path over a few subunits: the simulation's
+        // per-subunit random walk is a numerical device, and at close range
+        // it reads as kinks no stiff filament has.
+        let smooth = |k: usize| -> DVec3 {
+            let w = SMOOTH.min(k).min(n - 1 - k);
+            let (a, b) = (k - w, k + w);
+            (prefix[b + 1] - prefix[a]) / (b - a + 1) as f64
+        };
+        part.segs.reserve(n / stride + 1);
         let mut i = 0;
         while i + 1 < n {
             let j = (i + stride).min(n - 1);
             let ea = &sim.pool.elems[mt.body[i] as usize];
             let eb = &sim.pool.elems[mt.body[j] as usize];
-            // Smooth the drawn path over a few subunits: the simulation's
-            // per-subunit random walk is a numerical device, and at close
-            // range it reads as kinks no stiff filament has.
-            let smooth = |k: usize| -> DVec3 {
-                let lo = k.saturating_sub(SMOOTH);
-                let hi = (k + SMOOTH).min(n - 1);
-                let w = (k - lo).min(hi - k);
-                let (a, b) = (k - w, k + w);
-                let mut acc = DVec3::ZERO;
-                for m in a..=b {
-                    acc += sim.pool.elems[mt.body[m] as usize].pos;
-                }
-                acc / (b - a + 1) as f64
-            };
-            let (pa, pb) = (smooth(i), smooth(j));
             let mut flags = base_flags;
             if ea.cortical {
                 flags |= FLAG_CORTICAL;
@@ -283,10 +289,10 @@ pub fn snapshot(sim: &Sim, frame: &Frame, stride: usize) -> Snapshot {
             if j == n - 1 {
                 flags |= FLAG_PLUS_END;
             }
-            segs.push(Segment {
-                a: frame.to_render(pa).to_array(),
+            part.segs.push(Segment {
+                a: frame.to_render(smooth(i)).to_array(),
                 tip_dist: (n - 1 - i) as f32 * um,
-                b: frame.to_render(pb).to_array(),
+                b: frame.to_render(smooth(j)).to_array(),
                 minus_dist: i as f32 * um,
                 hash,
                 flags,
@@ -295,6 +301,23 @@ pub fn snapshot(sim: &Sim, frame: &Frame, stride: usize) -> Snapshot {
             });
             i = j;
         }
+        part
+    };
+    use rayon::prelude::*;
+    let parts: Vec<Part> = mts.par_iter().map(per_mt).collect();
+    let (mut q11, mut q12, mut qn) = (0.0f64, 0.0f64, 0.0f64);
+    let mut cortical = 0usize;
+    let (mut sa, mut sn) = (0.0f64, 0usize);
+    for p in parts {
+        segs.extend_from_slice(&p.segs);
+        stats.growing += p.growing;
+        stats.shrinking += p.shrinking;
+        q11 += p.q11;
+        q12 += p.q12;
+        qn += p.qn;
+        cortical += p.cortical;
+        sa += p.sa;
+        sn += p.sn;
     }
     // Cellulose synthase complexes and their microfibrils.
     if let Some(c) = sim.csc.as_ref() {
@@ -312,22 +335,30 @@ pub fn snapshot(sim: &Sim, frame: &Frame, stride: usize) -> Snapshot {
             });
         }
         let tau = (c.p.crystallinity_tau_s / c.p.dt) as f32;
-        for f in &c.fibrils {
-            // Each piece carries the crystallinity of its age.
-            let age = (sim.time as f32 - f.born as f32).max(0.0);
-            let cryst = 1.0 - (-age / tau).exp();
-            for w in f.points.windows(2) {
-                segs.push(Segment {
-                    a: frame.to_render(w[0]).to_array(),
-                    tip_dist: 10.0,
-                    b: frame.to_render(w[1]).to_array(),
-                    minus_dist: 10.0,
-                    hash: 0,
-                    flags: FLAG_FIBRIL,
-                    age,
-                    stress: cryst,
-                });
-            }
+        let fibril_segs: Vec<Vec<Segment>> = c
+            .fibrils
+            .par_iter()
+            .map(|f| {
+                // Each piece carries the crystallinity of its age.
+                let age = (sim.time as f32 - f.born as f32).max(0.0);
+                let cryst = 1.0 - (-age / tau).exp();
+                f.points
+                    .windows(2)
+                    .map(|w| Segment {
+                        a: frame.to_render(w[0]).to_array(),
+                        tip_dist: 10.0,
+                        b: frame.to_render(w[1]).to_array(),
+                        minus_dist: 10.0,
+                        hash: 0,
+                        flags: FLAG_FIBRIL,
+                        age,
+                        stress: cryst,
+                    })
+                    .collect()
+            })
+            .collect();
+        for v in fibril_segs {
+            segs.extend_from_slice(&v);
         }
         // Join each live fibril's last point to its complex.
         for csc in &c.cscs {

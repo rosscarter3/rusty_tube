@@ -57,6 +57,7 @@ struct Shared {
 }
 
 fn sim_thread(shared: Arc<Shared>, spec: SimSpec) {
+    crate::qos::user_initiated();
     let build = |spec: &SimSpec| {
         setup::build(&SimSetup {
             config: spec.config.as_deref(),
@@ -133,10 +134,19 @@ fn sim_thread(shared: Arc<Shared>, spec: SimSpec) {
             }
             seconds_per_step = t0.elapsed().as_secs_f64() / n as f64;
         }
-        if running || last_publish.elapsed() > Duration::from_millis(250) {
+        // At most ~20 snapshots a second while running: building one costs
+        // milliseconds, and the window cannot show more anyway.
+        let due = if running {
+            Duration::from_millis(50)
+        } else {
+            Duration::from_millis(250)
+        };
+        if last_publish.elapsed() >= due {
             let frame = scene::Frame::from_sim(s);
+            let t_snap = Instant::now();
             let mut snap = scene::snapshot(s, &frame, stride);
             snap.stats.seconds_per_step = seconds_per_step;
+            snap.stats.snapshot_ms = t_snap.elapsed().as_secs_f64() * 1000.0;
             *shared.latest.lock().unwrap() = Some(Arc::new(snap));
             shared.version.fetch_add(1, Ordering::Relaxed);
             last_publish = Instant::now();
@@ -414,6 +424,9 @@ impl App {
                                 ));
                                 ui.end_row();
                             }
+                            ui.label("snapshot");
+                            ui.label(format!("{:.1} ms, {} segments", st.snapshot_ms, ui_state.capsules));
+                            ui.end_row();
                             ui.label("speed");
                             let sps = if st.seconds_per_step > 0.0 {
                                 1.0 / st.seconds_per_step
