@@ -24,7 +24,7 @@ struct VsOut {
 
 fn radius_of(s: Segment) -> f32 {
     if ((s.flags & 128u) != 0u) {
-        return max(F.p1.y * 1.6, 0.02);
+        return max(F.p1.y * 1.6, 0.02) * max(F.bounds_min.w, 0.1);
     }
     if ((s.flags & 256u) != 0u) {
         return max(F.p1.y * 0.17, 0.004);

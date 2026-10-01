@@ -31,11 +31,11 @@ fn vs_splat(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) ->
     let bits = u32(F.p5.w + 0.5);
     if ((s.flags & 128u) != 0u) {
         // A CESA rosette: a point source as bright as ~0.15 um of tubulin.
-        w = section * 0.15;
+        w = section * 0.45;
         if ((bits & 1u) != 0u) { w = 0.0; }
     } else if ((s.flags & 256u) != 0u) {
         // Cellulose stained with a dye such as Pontamine Fast Scarlet S4B.
-        w = section * len * 0.5;
+        w = section * len * 0.12;
         if ((bits & 2u) != 0u) { w = 0.0; }
     } else if ((s.flags & 64u) != 0u) {
         w = 0.0;

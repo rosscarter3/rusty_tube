@@ -81,6 +81,8 @@ pub struct Settings {
     /// Focus distance relative to the orbit target (um).
     pub focus_dist: f32,
     pub show_cscs: bool,
+    /// Drawn size of CSCs relative to the default (wide shots need more).
+    pub csc_scale: f32,
     pub show_fibrils: bool,
     pub show_mts: bool,
 }
@@ -119,6 +121,7 @@ impl Default for Settings {
             aperture: 0.0,
             focus_dist: 0.0,
             show_cscs: true,
+            csc_scale: 1.0,
             show_fibrils: true,
             show_mts: true,
         }
@@ -983,7 +986,7 @@ impl Renderer {
                 s.contrast,
                 (!s.show_cscs as u32 | (!s.show_fibrils as u32) << 1 | (!s.show_mts as u32) << 2) as f32,
             ],
-            bounds_min: lo.extend(0.0).to_array(),
+            bounds_min: lo.extend(s.csc_scale).to_array(),
             bounds_max: hi.extend(0.0).to_array(),
         };
         self.prev_view_proj = unjittered;

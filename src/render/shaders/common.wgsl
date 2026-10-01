@@ -119,10 +119,10 @@ fn segment_colour(s: Segment, dir: vec3<f32>, emit: ptr<function, vec3<f32>>) ->
     }
     if ((s.flags & 256u) != 0u) {
         // Cellulose microfibril, by crystallinity (s.stress): amorphous
-        // teal to crystalline warm white.
+        // teal to crystalline amber.
         let k = clamp(s.stress, 0.0, 1.0);
-        *emit = mix(vec3<f32>(0.05, 0.2, 0.25), vec3<f32>(0.2, 0.17, 0.1), k) * 0.25;
-        return mix(vec3<f32>(0.18, 0.5, 0.6), vec3<f32>(0.75, 0.68, 0.55), k);
+        *emit = mix(vec3<f32>(0.05, 0.3, 0.27), vec3<f32>(0.35, 0.22, 0.06), k) * 0.3;
+        return mix(vec3<f32>(0.2, 0.85, 0.75), vec3<f32>(1.0, 0.75, 0.4), k);
     }
     if ((s.flags & 64u) != 0u) {
         // Stress glyph: pale, faintly self-lit, brighter where more anisotropic.
@@ -162,7 +162,8 @@ fn segment_colour(s: Segment, dir: vec3<f32>, emit: ptr<function, vec3<f32>>) ->
             c = mix(vec3<f32>(0.08, 0.3, 0.95), vec3<f32>(1.0, 0.42, 0.06), t);
         }
     } else {
-        c = vec3<f32>(0.85, 0.87, 0.9);
+        // Plain: a muted steel blue that cellulose and CSCs stand out against.
+        c = vec3<f32>(0.2, 0.28, 0.42);
     }
     // Plus-end comets.
     var e = vec3<f32>(0.0);
