@@ -199,6 +199,8 @@ pub struct Counters {
     pub override_cut_microtubule: u64,
     pub detachements: u64,
     pub shrinkages: u64,
+    /// Encounters of a growing tip with its own filament.
+    pub self_encounters: u64,
 }
 
 /// Parameters read on the hot path, refreshed whenever the config changes.
@@ -231,6 +233,7 @@ pub struct Dyn {
     pub proba_crossmicro_cut: f64,
     pub stress_catastrophe_bias: f64,
     pub stress_severing_bias: f64,
+    pub self_encounters: bool,
     pub proba_detach: f64,
     pub proba_shrink: f64,
     pub proba_rescue: f64,
@@ -267,6 +270,7 @@ impl Dyn {
             proba_crossmicro_cut: p.get_d("proba_crossmicro_cut"),
             stress_catastrophe_bias: p.get_d("stress_catastrophe_bias"),
             stress_severing_bias: p.get_d("stress_severing_bias"),
+            self_encounters: p.get_i("self_encounters") != 0,
             proba_detach: p.get_d("proba_detachement_par_step_par_microtubule"),
             proba_shrink: p.get_d("proba_shrink"),
             proba_rescue: p.get_d("proba_rescue"),
@@ -737,6 +741,8 @@ impl Sim {
     /// excluding this filament's last ten subunits (`NN_Mt` + `testRecursif`).
     fn nn_mt(&self, plus: u32) -> Option<(f64, u32)> {
         let elems = &self.pool.elems;
+        let self_ok = self.d.self_encounters;
+        let own = elems[plus as usize].mt;
         let p = elems[plus as usize].pos;
         let mut ancestors = [NONE; 10];
         let mut a = elems[plus as usize].prev;
@@ -750,7 +756,7 @@ impl Sim {
         let r2 = self.d.r_mt * self.d.r_mt;
         let mut best = (f64::INFINITY, NONE);
         self.pool.grid.for_each_27(p, |id| {
-            if id == plus {
+            if id == plus || (!self_ok && elems[id as usize].mt == own) {
                 return;
             }
             let d = (elems[id as usize].pos - p).length_squared();
@@ -826,6 +832,9 @@ impl Sim {
         near_c: Option<(f64, u32)>,
     ) {
         self.pool.elems[el as usize].contact = true;
+        if self.pool.elems[el as usize].mt == mt.id {
+            self.counters.self_encounters += 1;
+        }
         let (s1, anc) = {
             let p = &self.pool.elems[prev as usize];
             (p.dir, p.pos)

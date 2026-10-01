@@ -23,7 +23,15 @@ pub const NUCLEATION_PER_UM2_STEP: f64 = 0.001;
 pub fn preset(name: &str) -> anyhow::Result<Vec<String>> {
     Ok(match name {
         "calibrated" | "" => vec![],
-        "dense" => vec!["proba_crossmicro_shrink=0.4".into(), "Angle_mb_limite=1.0".into()],
+        // Also stops a filament meeting its own lattice: with the gentler
+        // membrane limit, filaments wrap round lobe tips, meet themselves
+        // anti-parallel, hairpin and coil -- an artefact of tubulaton's
+        // neighbour search, not something a stiff microtubule can do.
+        "dense" => vec![
+            "proba_crossmicro_shrink=0.4".into(),
+            "Angle_mb_limite=1.0".into(),
+            "self_encounters=0".into(),
+        ],
         // dense, plus steering by the stress field (use with --shape-stress
         // or another strain_0 field). The steering weight scales linearly
         // with the local field magnitude -- the anisotropy for the shape
@@ -35,6 +43,7 @@ pub fn preset(name: &str) -> anyhow::Result<Vec<String>> {
         "stress" => vec![
             "proba_crossmicro_shrink=0.4".into(),
             "Angle_mb_limite=1.0".into(),
+            "self_encounters=0".into(),
             "part_influence_influence=0.005".into(),
             "influence_ref=1.0".into(),
         ],

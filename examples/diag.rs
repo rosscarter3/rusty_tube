@@ -25,6 +25,7 @@ fn main() -> anyhow::Result<()> {
         c.encounter_bundle_grow,
         c.detachements
     );
+    println!("self-encounters {}", sim.counters.self_encounters);
     let l = sim.lengths();
     let mean = l.iter().sum::<usize>() as f64 / l.len() as f64 / 125.0;
     println!(

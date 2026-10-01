@@ -200,6 +200,12 @@ impl Params {
             ("Bound_Ind", -1),
             ("m_hashContour_resolution", 25),
             ("seed", 0),
+            // 1 (tubulaton's behaviour): a growing tip can meet and bundle
+            // with older parts of its own filament, beyond its last ten
+            // subunits. That lets a filament curved round a lobe tip hairpin
+            // back along itself and coil, which a stiff microtubule cannot
+            // do. 0 excludes the filament's own lattice from the search.
+            ("self_encounters", 1),
         ] {
             i.insert(k.to_string(), v);
         }

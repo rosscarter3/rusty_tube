@@ -139,7 +139,7 @@ enum Cmd {
         /// Cut the cell open above this fraction of its height.
         #[arg(long, default_value_t = 1.0)]
         clip: f32,
-        /// Aim at the middle of the longest microtubule.
+        /// Aim at the middle of the longest microtubule (at the first frame).
         #[arg(long)]
         look_at_mt: bool,
         /// Camera distance in um (overrides --zoom).
@@ -418,7 +418,7 @@ fn main() -> Result<()> {
                 }
                 cam.yaw += orbit.to_radians() * if f > 0 { 1.0 } else { 0.0 };
                 let snap = scene::snapshot(&sim, &frame, stride);
-                if look_at_mt {
+                if look_at_mt && f == 0 {
                     if let Some(mt) = sim.mts.values().max_by_key(|m| m.body.len()) {
                         let mid = mt.body[mt.body.len() / 2];
                         cam.target = frame.to_render(sim.pool.elems[mid as usize].pos);

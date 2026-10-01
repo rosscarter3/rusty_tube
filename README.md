@@ -63,8 +63,23 @@ at up to 4× with up to 1024 samples), `c` to switch look.
 | preset | what it is |
 |---|---|
 | `calibrated` (default) | pavesim's calibration: 1 step = 0.1 s at 0.08 µm/s growth, measured catastrophe, rescue and nucleation rates |
-| `dense` | illustrative: catastrophe on 40 % of steep encounters (Dixit & Cyr 2004) and a 57° membrane turn limit instead of 40°. In lobed cells the 40° rule causes most catastrophes, so this array is about 4× denser |
+| `dense` | illustrative: catastrophe on 40 % of steep encounters (Dixit & Cyr 2004), a 57° membrane turn limit instead of 40°, and no self-encounters (`self_encounters=0`, see below). In lobed cells the 40° rule causes most catastrophes, so this array is about 3× denser |
 | `stress` | `dense` plus steering by the stress field, with weight proportional to the local field magnitude (`part_influence_influence=0.005`, `influence_ref=1`) |
+
+## Self-encounters
+
+tubulaton's neighbour search excludes only a filament's own last ten
+subunits, so a growing tip can meet and bundle with older parts of its own
+filament. If it meets them anti-parallel, the bundling rule turns it back
+along itself: a hairpin that then follows itself into a coil. A microtubule,
+with a persistence length of millimetres, cannot curve back on itself on this
+scale; the hairpins come from membrane guidance carrying the tip round a
+lobe end. `self_encounters=0` excludes a filament's own lattice from the
+search. The default (1) keeps tubulaton's behaviour, where it is a small
+effect: about 5 000 self-contact growth steps in 15 000 steps of the
+calibrated set on a real cell, against about 300 000 with the gentler
+membrane limit of `dense`, which is why both illustrative presets switch it
+off.
 
 ## Stress-dependent alignment
 
@@ -85,8 +100,8 @@ between cortical subunits and the stress axis rises with anisotropy:
 
 | local anisotropy | 0–0.25 | 0.25–0.5 | 0.5–0.75 | 0.75–1 |
 |---|---|---|---|---|
-| no coupling | 0.49 | 0.47 | 0.51 | 0.54 |
-| `stress` preset | 0.56 | 0.68 | 0.77 | 0.83 |
+| no coupling | 0.51 | 0.55 | 0.51 | 0.48 |
+| `stress` preset | 0.56 | 0.67 | 0.75 | 0.84 |
 
 (0.5 is random in the plane; `cargo run --release --example stress_align`.)
 

@@ -67,6 +67,13 @@ well-defined result.
 * The `stop` parameter is not reset by the membrane-angle rule (a leftover
   debugging hook in `grow_plus_contact_mb`).
 
+## Additions
+
+* `self_encounters` (default 1, tubulaton's behaviour). Set to 0 to stop a
+  growing tip bundling with its own older lattice, which produces hairpins
+  and coils no stiff microtubule could form (see the README).
+* `--shape-stress`: a stress field derived from the cell outline.
+
 ## Not ported yet
 
 * Moving and deforming contours: `Movement_Speed`, `UpdateNextTime`,
