@@ -36,6 +36,10 @@ pub const FLAG_BUNDLED: u32 = 16;
 pub const FLAG_PLUS_END: u32 = 32;
 /// A stress-field glyph, not a microtubule.
 pub const FLAG_GLYPH: u32 = 64;
+/// A cellulose synthase complex (drawn as a sphere).
+pub const FLAG_CSC: u32 = 128;
+/// A piece of cellulose microfibril.
+pub const FLAG_FIBRIL: u32 = 256;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable, Default)]
@@ -78,6 +82,12 @@ pub struct SceneStats {
     /// (0.5 = random in the plane), or -1 without a stress field.
     pub stress_alignment: f64,
     pub seconds_per_step: f64,
+    pub cscs: usize,
+    pub csc_density: f64,
+    /// Fraction of CSC positions within capture range of a microtubule.
+    pub csc_on_mt: f64,
+    pub cellulose_um_per_um2: f64,
+    pub crystallinity: f64,
 }
 
 /// The dynamic part: microtubules as capsules.
@@ -285,6 +295,62 @@ pub fn snapshot(sim: &Sim, frame: &Frame, stride: usize) -> Snapshot {
             });
             i = j;
         }
+    }
+    // Cellulose synthase complexes and their microfibrils.
+    if let Some(c) = sim.csc.as_ref() {
+        for (k, csc) in c.cscs.iter().enumerate() {
+            let p = frame.to_render(csc.pos).to_array();
+            segs.push(Segment {
+                a: p,
+                tip_dist: if csc.pause > 0 { 1.0 } else { 0.0 },
+                b: p,
+                minus_dist: (sim.time - csc.born) as f32,
+                hash: hash32(k as u32 ^ 0x9e37),
+                flags: FLAG_CSC | if csc.on_mt { FLAG_BUNDLED } else { 0 },
+                age: 0.0,
+                stress: 0.0,
+            });
+        }
+        let tau = (c.p.crystallinity_tau_s / c.p.dt) as f32;
+        for f in &c.fibrils {
+            // Each piece carries the crystallinity of its age.
+            let age = (sim.time as f32 - f.born as f32).max(0.0);
+            let cryst = 1.0 - (-age / tau).exp();
+            for w in f.points.windows(2) {
+                segs.push(Segment {
+                    a: frame.to_render(w[0]).to_array(),
+                    tip_dist: 10.0,
+                    b: frame.to_render(w[1]).to_array(),
+                    minus_dist: 10.0,
+                    hash: 0,
+                    flags: FLAG_FIBRIL,
+                    age,
+                    stress: cryst,
+                });
+            }
+        }
+        // Join each live fibril's last point to its complex.
+        for csc in &c.cscs {
+            let f = &c.fibrils[csc.fibril];
+            let age = (sim.time as f32 - f.born as f32).max(0.0);
+            segs.push(Segment {
+                a: frame.to_render(*f.points.last().unwrap()).to_array(),
+                tip_dist: 10.0,
+                b: frame.to_render(csc.pos).to_array(),
+                minus_dist: 10.0,
+                hash: 0,
+                flags: FLAG_FIBRIL,
+                age,
+                stress: 1.0 - (-age / tau).exp(),
+            });
+        }
+        stats.cscs = c.cscs.len();
+        stats.csc_density = c.density_per_um2();
+        let (_, _, coloc) = c.motion_summary();
+        stats.csc_on_mt = coloc;
+        let (_, density, cryst) = c.wall_summary();
+        stats.cellulose_um_per_um2 = density;
+        stats.crystallinity = cryst;
     }
     let lens = sim.lengths();
     stats.mean_length_um = lens.iter().sum::<usize>() as f64 / lens.len().max(1) as f64 / UNITS_PER_UM;

@@ -23,6 +23,12 @@ struct VsOut {
 }
 
 fn radius_of(s: Segment) -> f32 {
+    if ((s.flags & 128u) != 0u) {
+        return max(F.p1.y * 1.6, 0.02);
+    }
+    if ((s.flags & 256u) != 0u) {
+        return max(F.p1.y * 0.17, 0.004);
+    }
     if ((s.flags & 64u) != 0u) {
         return max(F.p1.y * 0.7, 0.012);
     }
@@ -51,12 +57,31 @@ fn box_corner(s: Segment, corner: u32) -> vec3<f32> {
     return s.a + u * lx + v * ly + axis * lz;
 }
 
+// Visibility switches in F.p5.w: bit 0 hides CSCs, bit 1 fibrils, bit 2
+// microtubules.
+fn hidden(s: Segment) -> bool {
+    let bits = u32(F.p5.w + 0.5);
+    if ((s.flags & 128u) != 0u) {
+        return (bits & 1u) != 0u;
+    }
+    if ((s.flags & 256u) != 0u) {
+        return (bits & 2u) != 0u;
+    }
+    if ((s.flags & 64u) != 0u) {
+        return false;
+    }
+    return (bits & 4u) != 0u;
+}
+
 @vertex
 fn vs_capsule(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {
     let s = segs[ii];
     let w = box_corner(s, BOX_IDX[vi]);
     var o: VsOut;
     o.pos = F.view_proj * vec4<f32>(w, 1.0);
+    if (hidden(s)) {
+        o.pos = vec4<f32>(0.0, 0.0, -2.0, 1.0);
+    }
     o.world = w;
     o.inst = ii;
     return o;
@@ -68,6 +93,9 @@ fn vs_capsule_shadow(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii
     let w = box_corner(s, BOX_IDX[vi]);
     var o: VsOut;
     o.pos = F.light_view_proj * vec4<f32>(w, 1.0);
+    if (hidden(s)) {
+        o.pos = vec4<f32>(0.0, 0.0, -2.0, 1.0);
+    }
     o.world = w;
     o.inst = ii;
     return o;
@@ -153,7 +181,7 @@ fn fs_capsule(in: VsOut) -> GOut {
     let scale = r / 0.0125;
     let px_um = length(p - F.cam_pos.xyz) * F.jitter.w;
     let lod = 1.0 - smoothstep(0.0025, 0.007, px_um / scale);
-    if (lod > 0.0 && (s.flags & 64u) == 0u) {
+    if (lod > 0.0 && (s.flags & (64u | 128u | 256u)) == 0u) {
         var helper = vec3<f32>(0.0, 0.0, 1.0);
         if (abs(dir.z) > 0.9) {
             helper = vec3<f32>(1.0, 0.0, 0.0);

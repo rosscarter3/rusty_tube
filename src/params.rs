@@ -162,6 +162,24 @@ impl Params {
             ("rate_rescue_per_s", -1.0),
             ("rate_detachment_per_s", -1.0),
             ("rate_severing_per_s", -1.0),
+            // Cellulose synthase complexes (src/sim/csc.rs), used only with
+            // csc_enable=1. Measured: insertion = density / lifetime =
+            // 1 um^-2 / 420 s (Sampathkumar et al. 2013); speed 353 +/- 79
+            // nm/min (Paredez et al. 2006); ~1 min pause after insertion
+            // (Gutierrez et al. 2009). Assumed (see the README table): the
+            // insertion bias, the capture distance and angle, fibril
+            // guidance, and crystallisation time.
+            ("csc_insertion_rate", 0.0024),
+            ("csc_lifetime_s", 420.0),
+            ("csc_pause_s", 60.0),
+            ("csc_speed_um_per_min", 0.35),
+            ("csc_mt_insertion_bias", 0.8),
+            ("csc_capture_um", 0.1),
+            ("csc_capture_angle", 0.7),
+            ("csc_coloc_um", 0.2),
+            ("csc_fibril_guidance", 0.2),
+            ("crystallinity_tau_s", 1800.0),
+            ("fibril_keep_s", 1800.0),
             // Written by Contour::open when nucleating in a volume.
             ("CentreX", 0.0),
             ("CentreY", 0.0),
@@ -206,6 +224,11 @@ impl Params {
             // back along itself and coil, which a stiff microtubule cannot
             // do. 0 excludes the filament's own lattice from the search.
             ("self_encounters", 1),
+            ("csc_enable", 0),
+            // 1: CSCs tethered to microtubules (CSI1 present); 0: csi1.
+            ("csc_tether", 1),
+            // Guidance is re-evaluated every 5 s: a CSC moves ~30 nm in that time.
+            ("csc_update_steps", 50),
         ] {
             i.insert(k.to_string(), v);
         }

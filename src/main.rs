@@ -191,6 +191,9 @@ fn apply_render_sets(s: &mut Settings, sets: &[String]) -> Result<()> {
             "light_pitch" => s.light_pitch = f,
             "light" => s.light_intensity = f,
             "aperture" => s.aperture = f,
+            "show_cscs" => s.show_cscs = f != 0.0,
+            "show_fibrils" => s.show_fibrils = f != 0.0,
+            "show_mts" => s.show_mts = f != 0.0,
             "focus_dist" => s.focus_dist = f,
             _ => bail!("unknown render setting {k}"),
         }

@@ -83,6 +83,16 @@ impl Grid {
         }
     }
 
+    /// Visit everything in the one cell containing `p`.
+    #[inline]
+    pub fn for_each_cell(&self, p: DVec3, mut f: impl FnMut(u32)) {
+        if let Some(v) = self.cells.get(&self.key(p)) {
+            for &id in v {
+                f(id);
+            }
+        }
+    }
+
     /// Whether any cell of the 27 around `p` is occupied.
     pub fn any_27(&self, p: DVec3) -> bool {
         let mut any = false;

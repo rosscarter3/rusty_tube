@@ -73,6 +73,8 @@ well-defined result.
   growing tip bundling with its own older lattice, which produces hairpins
   and coils no stiff microtubule could form (see the README).
 * `--shape-stress`: a stress field derived from the cell outline.
+* `csc_enable`: cellulose synthase complexes and cellulose deposition
+  (`src/sim/csc.rs`, see the README).
 
 ## Not ported yet
 

@@ -110,6 +110,20 @@ fn ramp_inferno(t0: f32) -> vec3<f32> {
 fn segment_colour(s: Segment, dir: vec3<f32>, emit: ptr<function, vec3<f32>>) -> vec3<f32> {
     let mode = i32(F.p1.x + 0.5);
     var c = vec3<f32>(0.8);
+    if ((s.flags & 128u) != 0u) {
+        // Cellulose synthase complex: a glowing bead, dim while it pauses
+        // after insertion, brighter once it is moving.
+        let moving = 1.0 - clamp(s.tip_dist, 0.0, 1.0);
+        *emit = mix(vec3<f32>(0.5, 0.25, 0.9), vec3<f32>(1.0, 0.4, 0.75), moving) * (0.8 + 1.4 * moving) * max(F.p2.x, 0.3);
+        return vec3<f32>(1.0, 0.55, 0.85);
+    }
+    if ((s.flags & 256u) != 0u) {
+        // Cellulose microfibril, by crystallinity (s.stress): amorphous
+        // teal to crystalline warm white.
+        let k = clamp(s.stress, 0.0, 1.0);
+        *emit = mix(vec3<f32>(0.05, 0.2, 0.25), vec3<f32>(0.2, 0.17, 0.1), k) * 0.25;
+        return mix(vec3<f32>(0.18, 0.5, 0.6), vec3<f32>(0.75, 0.68, 0.55), k);
+    }
     if ((s.flags & 64u) != 0u) {
         // Stress glyph: pale, faintly self-lit, brighter where more anisotropic.
         *emit = vec3<f32>(0.55, 0.75, 1.0) * 0.25 * s.stress;

@@ -80,6 +80,9 @@ pub struct Settings {
     pub aperture: f32,
     /// Focus distance relative to the orbit target (um).
     pub focus_dist: f32,
+    pub show_cscs: bool,
+    pub show_fibrils: bool,
+    pub show_mts: bool,
 }
 
 impl Default for Settings {
@@ -115,6 +118,9 @@ impl Default for Settings {
             view_shift: 0.0,
             aperture: 0.0,
             focus_dist: 0.0,
+            show_cscs: true,
+            show_fibrils: true,
+            show_mts: true,
         }
     }
 }
@@ -975,7 +981,7 @@ impl Renderer {
                 },
                 s.saturation,
                 s.contrast,
-                0.0,
+                (!s.show_cscs as u32 | (!s.show_fibrils as u32) << 1 | (!s.show_mts as u32) << 2) as f32,
             ],
             bounds_min: lo.extend(0.0).to_array(),
             bounds_max: hi.extend(0.0).to_array(),

@@ -170,6 +170,8 @@ struct Ui {
     cell: String,
     neck_stress: bool,
     shape_stress: bool,
+    csc: bool,
+    csc_tether: bool,
     seed: i64,
     stride: usize,
     steps_per_frame: u32,
@@ -260,6 +262,8 @@ impl App {
             cell: spec.outline.clone().unwrap_or_else(|| "config".into()),
             neck_stress: spec.neck_stress,
             shape_stress: spec.shape_stress,
+            csc: d.get_i("csc_enable") != 0,
+            csc_tether: d.get_i("csc_tether") != 0,
             seed: 1,
             stride: 3,
             steps_per_frame: 20,
@@ -304,6 +308,8 @@ impl App {
         }
         spec.neck_stress = self.ui.neck_stress;
         spec.shape_stress = self.ui.shape_stress;
+        spec.sets.retain(|s| !s.starts_with("csc_enable="));
+        spec.sets.push(format!("csc_enable={}", self.ui.csc as u8));
         spec.sets.retain(|s| !s.starts_with("seed="));
         spec.sets.push(format!("seed={}", self.ui.seed));
         self.spec = spec.clone();
@@ -392,6 +398,22 @@ impl App {
                             ui.label("order (xy)");
                             ui.label(format!("{:.2}", st.order_xy));
                             ui.end_row();
+                            if st.cscs > 0 {
+                                ui.label("cellulose synthase");
+                                ui.label(format!(
+                                    "{} CSCs ({:.2}/um2), {:.0} % on MTs",
+                                    st.cscs,
+                                    st.csc_density,
+                                    st.csc_on_mt * 100.0
+                                ));
+                                ui.end_row();
+                                ui.label("cellulose");
+                                ui.label(format!(
+                                    "{:.2} um/um2, crystallinity {:.2}",
+                                    st.cellulose_um_per_um2, st.crystallinity
+                                ));
+                                ui.end_row();
+                            }
                             ui.label("speed");
                             let sps = if st.seconds_per_step > 0.0 {
                                 1.0 / st.seconds_per_step
@@ -457,6 +479,17 @@ impl App {
                                     }
                                     if ui.checkbox(&mut ui_state.shape_stress, "shape stress").changed() {
                                         reset = true;
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    if ui.checkbox(&mut ui_state.csc, "cellulose synthase").changed() {
+                                        reset = true;
+                                    }
+                                    if ui_state.csc && ui.checkbox(&mut ui_state.csc_tether, "CSI1 tether").changed() {
+                                        cmds.push(Cmd::Set(
+                                            "csc_tether".into(),
+                                            format!("{}", ui_state.csc_tether as u8),
+                                        ));
                                     }
                                 });
                                 if ui
@@ -620,6 +653,11 @@ impl App {
                             ui.add(egui::Slider::new(&mut s.vignette, 0.0..=1.0).text("vignette"));
                             ui.checkbox(&mut s.taa, "temporal accumulation");
                             ui.checkbox(&mut s.show_membrane, "show membrane");
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut s.show_mts, "microtubules");
+                                ui.checkbox(&mut s.show_cscs, "CSCs");
+                                ui.checkbox(&mut s.show_fibrils, "cellulose");
+                            });
                         });
 
                         ui.collapsing("Camera", |ui| {

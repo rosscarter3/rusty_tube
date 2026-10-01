@@ -14,6 +14,7 @@
 //! `PORTING.md` and are limited to removing undefined behaviour (unclamped
 //! `acos`, normalising zero vectors, dangling pointers).
 
+pub mod csc;
 pub mod grid;
 pub mod membrane;
 pub mod output;
@@ -312,6 +313,8 @@ pub struct Sim {
     pub counters: Counters,
     pub time: i64,
     scratch_nn: Vec<Option<(f64, u32)>>,
+    /// Cellulose synthase layer (csc_enable=1).
+    pub csc: Option<csc::CscLayer>,
 }
 
 impl Sim {
@@ -342,13 +345,23 @@ impl Sim {
             counters: Counters::default(),
             time: 0,
             scratch_nn: Vec::new(),
+            csc: None,
         };
         sim.initiate()?;
+        if sim.params.get_i("csc_enable") != 0 {
+            sim.csc = Some(csc::CscLayer::new(
+                csc::CscParams::from_params(&sim.params),
+                &sim.membrane,
+            ));
+        }
         Ok(sim)
     }
 
     pub fn refresh_params(&mut self) {
         self.d = Dyn::from_params(&self.params);
+        if let Some(c) = self.csc.as_mut() {
+            c.p = csc::CscParams::from_params(&self.params);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -712,6 +725,13 @@ impl Sim {
             }
         }
         Ok(())
+    }
+
+    /// Advance the cellulose synthase layer by one step, if enabled.
+    pub fn step_csc(&mut self) {
+        if let Some(c) = self.csc.as_mut() {
+            c.step(&self.membrane, &self.pool, &mut self.rng, self.time);
+        }
     }
 
     /// `Microtubule::evolve`. Returns false if the microtubule vanished.

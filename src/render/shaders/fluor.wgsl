@@ -11,6 +11,7 @@ struct SOut {
     @location(2) @interpolate(flat) b: vec2<f32>,
     @location(3) @interpolate(flat) sigma: f32,
     @location(4) @interpolate(flat) weight: f32,
+    @location(5) @interpolate(flat) colour: vec3<f32>,
 }
 
 @vertex
@@ -27,6 +28,20 @@ fn vs_splat(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) ->
     let section = exp(-0.5 * dz * dz / (half * half));
     let len = length(vb - va);
     var w = section * len;
+    let bits = u32(F.p5.w + 0.5);
+    if ((s.flags & 128u) != 0u) {
+        // A CESA rosette: a point source as bright as ~0.15 um of tubulin.
+        w = section * 0.15;
+        if ((bits & 1u) != 0u) { w = 0.0; }
+    } else if ((s.flags & 256u) != 0u) {
+        // Cellulose stained with a dye such as Pontamine Fast Scarlet S4B.
+        w = section * len * 0.5;
+        if ((bits & 2u) != 0u) { w = 0.0; }
+    } else if ((s.flags & 64u) != 0u) {
+        w = 0.0;
+    } else if ((bits & 4u) != 0u) {
+        w = 0.0;
+    }
     var o: SOut;
     if (F.p1.w < 1e5 && max(s.a.z, s.b.z) > F.p1.w) {
         w = 0.0;
@@ -64,6 +79,12 @@ fn vs_splat(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) ->
     o.b = vb.xy;
     o.sigma = sigma;
     o.weight = w;
+    o.colour = vec3<f32>(0.25, 1.0, 0.42);
+    if ((s.flags & 128u) != 0u) {
+        o.colour = vec3<f32>(1.0, 0.45, 0.12);
+    } else if ((s.flags & 256u) != 0u) {
+        o.colour = vec3<f32>(0.3, 0.5, 1.0);
+    }
     return o;
 }
 
@@ -80,5 +101,5 @@ fn fs_splat(in: SOut) -> @location(0) vec4<f32> {
     let d = length(in.q - in.a - ab * h);
     let g = exp(-0.5 * d * d / (in.sigma * in.sigma)) / (2.0 * PI * in.sigma * in.sigma);
     let i = g * in.weight * F.p3.z * 0.02;
-    return vec4<f32>(vec3<f32>(0.25, 1.0, 0.42) * i, 0.0);
+    return vec4<f32>(in.colour * i, 0.0);
 }

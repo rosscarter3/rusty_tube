@@ -139,6 +139,7 @@ impl Sim {
         if self.params.get_i("Movement_Only") != 1 {
             self.evolve()?;
         }
+        self.step_csc();
         if write_files {
             let save = self.params.get_i("save_events");
             if save > 0 && t % save == 0 {

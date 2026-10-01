@@ -81,6 +81,65 @@ calibrated set on a real cell, against about 300 000 with the gentler
 membrane limit of `dense`, which is why both illustrative presets switch it
 off.
 
+## Cellulose synthase and cellulose (experimental)
+
+`-s csc_enable=1` adds cellulose synthase complexes (CSCs) in the plasma
+membrane and the cellulose they deposit (`src/sim/csc.rs`). Not part of
+tubulaton.
+
+* **Insertion** at a per-area rate, preferentially next to cortical
+  microtubules, then a pause.
+* **Movement** at constant speed. A complex tethered by CSI1 follows its own
+  microtubule, through crossovers, until that microtubule depolymerises
+  from under it. An untethered one runs straight, nudged toward the
+  cellulose already in the wall (the autonomous guidance of Chan & Coen
+  2020). A free complex can be captured by a nearby microtubule that runs
+  close to its heading.
+* **Removal** after an exponential lifetime.
+* **Deposition**: each complex extrudes a microfibril behind it. The wall
+  keeps, per membrane vertex, a nematic orientation tensor, the amount of
+  cellulose, and the fraction that has crystallised.
+* **Mutant**: `csc_tether=0` is the *csi1* mutant.
+
+| parameter | value | basis |
+|---|---|---|
+| CSC speed | 0.35 µm/min | measured: 353 ± 79 nm/min (Paredez et al. 2006) |
+| lifetime in the membrane | 7 min | measured (Sampathkumar et al. 2013) |
+| density | 1 per µm² at steady state | measured (Sampathkumar et al. 2013); sets insertion = density / lifetime |
+| pause after insertion | 1 min | measured (Gutierrez et al. 2009) |
+| insertion next to microtubules | 80 % | **assumed**: "preferentially" in Gutierrez et al. 2009 |
+| capture distance / angle | 0.1 µm / 40° | **assumed** |
+| autonomous (fibril) guidance | 0.2 | **assumed**; qualitative in Chan & Coen 2020 |
+| crystallisation time | 30 min | **assumed**: there is no kinetic model of primary-wall crystallinity; treat it as a placeholder to compare with bulk measurements |
+
+Against Li et al. 2012 (`cargo run --release --example csc_stats`, 40 min,
+`dense` preset, `procedural:12`):
+
+| | CSCs co-localised with MTs | chance |
+|---|---|---|
+| wild type, measured | 73 ± 4 % | 43 ± 6 % |
+| wild type, model | 45 % | 36 % |
+| *csi1*, measured | 47 ± 11 % | 43 ± 6 % |
+| *csi1*, model | 42 % | 36 % |
+
+*csi1* matches: co-localisation is close to chance. Wild-type enrichment is
+in the right direction but too weak. The likely reason is the microtubule
+array: in this geometry it is sparser and shorter-lived than the hypocotyl
+arrays the data come from. A tethered complex loses its track whenever its
+microtubule depolymerises. The deposited cellulose follows the microtubules
+better with the tether than without (orientation agreement 0.62 vs 0.58,
+where 0.5 is chance). Without the tether the cellulose is more ordered at
+the 1 µm scale (0.69 vs 0.61): untethered complexes run straight and follow
+existing fibrils.
+
+Rendering: complexes are glowing beads, dim while paused. Microfibrils are
+thin tubes, teal when new and warm white when crystalline. In the confocal
+look they appear as CESA puncta (orange) and a cellulose stain (blue).
+Viewer and `-r` switches: `show_cscs`, `show_fibrils`, `show_mts`.
+
+The complexes do not yet act back on the microtubules or on wall
+mechanics. Those are the next steps.
+
 ## Stress-dependent alignment
 
 `--shape-stress` derives a stress field from the cell outline by treating
